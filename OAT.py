@@ -4,7 +4,7 @@ organoid_tracking_tools (OAT) is a set of methods that integrates FIJI's
 Trackmate csv files output to process cell displacement within an organoid.
 
 @author: Alex-932
-@version: 0.5
+@version: 0.5.1
 """
 
 import os
@@ -12,15 +12,15 @@ import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+#from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.lines import Line2D
-import matplotlib.cm as cm
-from sklearn.cluster import DBSCAN, KMeans
+#import matplotlib.cm as cm
+from sklearn.cluster import DBSCAN
 from skimage import io
-from math import sqrt
 import tifffile
 import cv2
-from scipy.spatial import ConvexHull, convex_hull_plot_2d
+from scipy.spatial import ConvexHull #, convex_hull_plot_2d
+from sklearn.decomposition import PCA
 from PyVTK import PyVTK
 
 class OAT():
@@ -33,32 +33,33 @@ class OAT():
         ----------
         fiji_dir : str
             Directory path for Fiji.app folder.
-        sample : str, optional
-            Name of the sample. The default are the third first characters of 
-            the image files.
         wrk_dir : str, optional
             Working directory i.e. the dir. where the tree will be built. 
             The default is the script directory.
 
         """
-        if  not os.path.exists(fiji_dir):
+        # Creating the directory table
+        self.dir = pd.Series(dtype="str")
+        
+        # Adding the fiji directory
+        if not os.path.exists(fiji_dir):
             raise FileNotFoundError("No such fiji directory")
-        # Checking if the user gave a directory.
+        self.dir["fiji"] = fiji_dir
+        
+        # Adding the working directory
         if wrk_dir == None :
-            root = os.getcwd()
-        # If yes, then we save it if it's an actual directory or create it 
-        # otherwise.
+            self.dir["root"] = os.getcwd()
         else :
             if not os.path.exists(wrk_dir):
                 os.makedirs(wrk_dir)
-            root = wrk_dir
+            self.dir["root"] = wrk_dir
+            
+        # Creating the file table    
         self.files = pd.DataFrame(dtype="str")
-        self.dir = pd.Series(dtype="str")
-        self.dir["fiji"] = fiji_dir
-        self.dir["root"] = root
+        
         # Building the directories tree
         self.buildTree()
-        self.version = "0.5"      
+        self.version = "0.5.1"      
          
     def buildTree(self):
         """
@@ -71,6 +72,8 @@ class OAT():
         self.dir["tracks"] = root+'\\data\\tracks'
         self.dir["out"] = root+'\\output'
         self.dir["figs"] = root+'\\output\\figs'
+        self.dir["spotsFigs"] = root+'\\output\\figs\\spots'
+        self.dir["vectorsFigs"] = root+'\\output\\figs\\vectors'
         self.dir["anim"] = root+'\\output\\animation'
         self.dir["vtk"] = root+'\\output\\vtk_export'
         
@@ -117,7 +120,7 @@ class OAT():
         """
         # Checking tifs files.
         if mode == "tifs" :
-            # Looking for images.
+            # Looking for tif images.
             tifs = [file for file in os.listdir(self.dir["tifs"]) 
                          if re.split(r'\.', file)[-1] == "tif"]
             # Checking if there are images.
@@ -130,6 +133,7 @@ class OAT():
                                     for file in tifs]
                 self.files["time"] = [k for k in range(len(self.files.index))]
                 self.sample = os.path.commonprefix(list(self.files["tifs"]))
+                
         # Checking csv files related to spots.
         if mode == "spots" :
             # Looking for csv files.
@@ -139,10 +143,12 @@ class OAT():
                 self.setInstructions()
                 raise ImportError("No .csv found in the spots directory")
             else :
+                # Adding and linking them to the file table.
                 spots = pd.Series(spots, index = [re.split("\_rs.csv", file)[0]
                                                   for file in spots],
                                   name = "spots", dtype = "str")
                 self.files = pd.concat([self.files, spots], axis = 1)
+                
         # Checking csv files related to tracks and edges.
         if mode == "tracks" :
             # Looking for csv files containing tracks.
@@ -162,18 +168,21 @@ class OAT():
     def getVolShape(self):
         """
         Save the shape of the volume as a tuple (Z, Y, X) called self.VolShape.
-
+        Load the first image and get its volume.
+        
         """
         # Opening the first tif file.
         file = io.imread(self.dir["tifs"]+"\\"+self.files["tifs"][0])
+        
         # Converting it to a numpy array.
         array = np.array(file)
+        
         # Saving the shapes
         self.VolShape = array.shape
         
     def loadTif(self):
         """
-        Loading the Tifs files from the data\3D Organoids directory.
+        Loading the Tifs files from the "\\data\\3D Organoids" directory.
 
         """
         self.importFiles("tifs")
@@ -188,11 +197,13 @@ class OAT():
         """
         #Creating the instruction file in the fiij directory.
         instructions = open(self.fiji_dir+"\\OAT_instructions.txt", "w")
+        
         #The formatting of the instructions are as bellow:
         #   Each row correspond to an image file.
         #   The row is seperated in half by a comma.
         #   Before the comma is the input image file path.
-        #   After the comma is the output .csv file path. 
+        #   After the comma is the output .csv file path.
+        
         for file in self.files["tifs"]:
             instructions.write(
                 self.dir["tifs"]+"\\"+file+","+self.dir["spots"]+"\\"+\
@@ -200,8 +211,8 @@ class OAT():
         
     def readSpots(filepath):
         """
-        Load segmentation result of Trackmate detection as a dataframe and 
-        clean it a little bit. The dataframe is called spots_df
+        Load segmentation result of Trackmate detection as a dataframe, 
+        remove the unwanted columns and return the dataframe.
 
         Parameters
         ----------
@@ -211,59 +222,65 @@ class OAT():
         Returns
         -------
         spots_df : pd.DataFrame
-            Dataframe where rows represent spots and columns some attributes
+            Dataframe where index are spots and columns are 
             ("QUALITY", "X", "Y", "Z").
 
         """
-        # The csv is imported as a dataframe. It is called raw because there 
-        # are unwanted spots from cells that are not in the good organoid.
+        # Importing the csv as a dataframe adn dropping the 3 first columns.
         spots_df = pd.read_csv(filepath)
         spots_df.drop(index = [0, 1, 2], inplace = True)
-        # We remove the 3 first lines as they are redundant labels.
+        
+        # Setting the index to be the IDs of the spots.
         spots_df.index = spots_df["LABEL"]
-        # We set the LABEL column as the dataframe's index.
+        
+        # Renaming columns to have smaller names.
         for axis in ["X", "Y", "Z"]:
             # We rename the column as it is shorter.
             spots_df.rename(columns = {"POSITION_"+axis:axis},
                                   inplace = True)
-        # Selecting usefull columns
+        # Keeping useful columns.
         spots_df = spots_df.loc[:,["QUALITY", "X", "Y", "Z"]]
-        # Setting every columns as float type
+        
+        # Setting every values to float type.
         spots_df = spots_df.astype("float")
+        
         return spots_df
     
     def getSpots(self):
         """
-        Creating a dataframe where all spots of all .csv files are present 
-        called spots
+        Importing and merging all spots.csv files and saving them as 
+        self.spots.
 
         """
         # Checking the .csv files and getting the list of names.
         self.importFiles("spots")
+        
         # Creating the spots dataframe which contains info regarding each spots
         # for each image file (or timepoint).
         self.spots = pd.DataFrame(columns=["QUALITY", "X", "Y", "Z",
                                            "FILE"], dtype=("float"))
-        #Setting the correct type for the "FILE" and 'CLUSTER' columns.
+        
+        # Setting the correct type for the "FILE" and 'CLUSTER' columns.
         self.spots["FILE"] = self.spots["FILE"].astype("str")
+        
+        # Reading each file and adding them to the spots dataframe.
         for file in self.files["spots"] :
-            reading = OAT.readSpots(self.dir["spots"]+"\\"+file)
-            reading["FILE"] = len(reading.index)*[
-                re.split("_rs.csv", file)[0]]
-            self.spots = pd.concat([self.spots, reading])
+            read = OAT.readSpots(self.dir["spots"]+"\\"+file)
+            read["FILE"] = len(read.index)*[re.split("_rs.csv", file)[0]]
+            self.spots = pd.concat([self.spots, read])
     
-    def euclid_distance(PointA, PointB):
+    def euclidDist(PointA, PointB):
         """
-        Process the euclid distance of 2 given points. Works in 3D as well as
-        in 2D. Just make sure that both points have the same amount of 
-        coordinates.
+        Return the euclid distance between PointA and PointB. 
+        Works in 3D as well as in 2D. 
+        Just make sure that both points have the same dimension.
 
         Parameters
         ----------
         PointA : list
-            List of the coordinates (2 or 3).
+            List of the coordinates (length = dimension).
         PointB : list
-            List of the coordinates (2 or 3).
+            List of the coordinates (length = dimension).
 
         Returns
         -------
@@ -271,8 +288,10 @@ class OAT():
             Euclid distance between the 2 given points.
 
         """
-        return sqrt(sum([(PointA[k]-PointB[k])**2 for k in range(len(
-            PointA))])) 
+        # Computing (xa-xb)², (ya-yb)², ...
+        sqDist = [(PointA[k]-PointB[k])**2 for k in range(len(PointA))]
+        
+        return np.sqrt(sum(sqDist)) 
     
     def getCentroid(spots_df):
         """
@@ -287,183 +306,266 @@ class OAT():
         Returns
         -------
         centroid : list
-            List that contains the coordinates of the processed centroid.
+            List that contains the coordinates of the computed centroid.
 
         """
         centroid = []
         for axis in ["X", "Y", "Z"]:
             centroid.append(spots_df[axis].mean())
+            
         return centroid
     
-    def coordTransformation(df, Xratio = 1, Yratio = 1, Zratio = 1):
+    def reScaling(df, ratio = [1, 1, 1]):
         """
-        Transform the coordinates of the given axis by the given amount. 
+        Rescale the coordinates of the given axis by the given ratio. 
 
         Parameters
         ----------
         df : pandas.DataFrame
             Dataframe which contains axis as columns and spots as index.
-        Xratio : float
-            Coordinates multiplier for the X axis.
-        Yratio : float
-            Coordinates multiplier for the Y axis.
-        Zratio : float
-            Coordinates multiplier for the Z axis.
+        ratio : list
+            Coordinates multiplier for each axis : [Xratio, Yratio, Zratio].
 
         Returns
         -------
         df : pandas.DataFrame
-            Same as the input one but with transformed coordinates.
+            Same as the input one but with rescaled coordinates.
 
         """
         out_df = pd.DataFrame(index = df.index, columns = df.columns)        
-        out_df["X"] = df.loc[:, "X"]*Xratio
-        out_df["Y"] = df.loc[:, "Y"]*Yratio
-        out_df["Z"] = df.loc[:, "Z"]*Zratio
-        return out_df         
-    
-    def clusteringEngine(subdf, volume_center, eps = 40, min_samples = 3, 
-                         show = False):
+        out_df["X"] = df.loc[:, "X"]*ratio[0]
+        out_df["Y"] = df.loc[:, "Y"]*ratio[1]
+        out_df["Z"] = df.loc[:, "Z"]*ratio[2]
+        
+        return out_df
+
+    def selectCluster(subdf, center, column, threshold = 10):
         """
-        Cluster the spots to get the ones that are the most likely to be part
-        of the organoïd.
+        Search for the cluster that is the most likely of being the
+        organoid cluster.
+        
+        The algorithm compute the centroid of each cluster.
+        
+        Then it computes the distance between each centroid and the center of 
+        the volume.
+        
+        Finally, it returns the cluster that is the closest to the center and
+        that contains more than {threshold} spots.
 
         Parameters
         ----------
         subdf : pd.DataFrame
-            Spots from one frame containing the coordinates in columns.
-        volume_center : list 
-            center coordinates of the whole volume as follow [X, Y, Z].
-        eps : int, optional
-            Radius of search for the DBSCAN algorithm. The default is 40.
-        min_samples : int , optional
-            Min. number of neighbors for the DBSCAN. The default is 3.
-        show : bool, optional
-            If True, show the histogram of the distance between spots and 
-            the center of the volume. The default is False.
+            Dataframe that contains spots coordinates as well as clustering
+            results.
+        center : list 
+            Center coordinates of the whole volume as follow [X, Y, Z].
+        column : str
+            Name of the column that contains cluster IDs.
+        threshold : int, optional
+            Number of spots a cluster must have to be selected. The default is
+            10.
 
         Returns
         -------
-        Results : TYPE
-            DESCRIPTION.
+        selected : pd.Series
+            Index is the ID of the spots, values are booleans.
+            
 
         """
-        # Getting the centroid by randomly subsampling 10 spots, 100 times.
-        # This allow us to get the most probable location of the center of the
-        # organoïd.
-        centroids = [OAT.getCentroid(subdf.sample(10, axis=0)) \
-                     for k in range(100)]
+        # Retrieving the ID of the clusters as well as the number of spots they
+        # contains.
+        clustersInfo = subdf[column].value_counts()
+        clustersID = clustersInfo.index
+        
+        # Creating a Series to store the distances between the centroid and the
+        # center.
+        dist = pd.Series(dtype = "float")
+        
+        # Computing the distance for each clusters.
+        for ID in clustersID :
+            centroid = OAT.getCentroid(subdf[subdf[column] == ID])
+            distance = OAT.euclidDist(centroid, center)
+            dist.loc[ID] = distance
+        
+        # Sorting from the lowest to the greatest distance.
+        dist.sort_values(ascending = True, inplace = True)
+        
+        # Going through the closest to farthest cluster until it contains more 
+        # than {threshold} spots. If there are no cluster that meets both 
+        # conditions, we take the first one.
+        selectedClusterID = 0
+        for idx in range(len(dist.index)):
+            if clustersInfo[dist.index[idx]] >= threshold:
+                selectedClusterID = dist.index[idx]
+                break
+        
+        # Returning the selection result as a pd.Series
+        return subdf[column] == selectedClusterID      
+    
+    def clusteringEngine(subdf, center, cIter = 100, cSample = 10, 
+                         eps = 40, min_samples = 3, threshold = 10):
+        """
+        Cluster and select the spots that are more likely to be part of the
+        organoid.
+        
+        First, the algorithm compute the centroid of the organoid by taking 
+        {cSample} random spots and computing their centroid. 
+        It's repeated {cIter} times then it takes the average centroid.
+        
+        A DBSCAN is then runned on the distance between the spots and the 
+        centroid as we expect a spike at a certain distance given all spots 
+        that are part of the organoid should be at the same distance.
+        DBSCAN give the spots for each spikes and we select the right spike by 
+        taking the one that is closer to the centroid.
+        
+        A second DBSCAN is runned on the spots of the selected spikes to 
+        separate the ones that are close but not part of the organoid. The 
+        cluster is also selected by the selectCluster method.  
+
+        Parameters
+        ----------
+        subdf : pd.DataFrame
+            Spots to cluster. Same formatting as self.spots expected.
+        center : list 
+            Center coordinates of the whole volume as follow [X, Y, Z].
+        cIter :  int, optional
+            cIter number for the centroid location. The default is 100.
+        cSample : int, optional
+            Number of spots to compute the centroid. The default is 10.
+        eps : int, optional
+            Radius of search for the 2nd DBSCAN algorithm. The default is 40.
+        min_samples : int , optional
+            Min. number of neighbors for the 2nd DBSCAN. The default is 3.
+        threshold : int, optional
+            Number of spots a cluster must have to be selected. The default is
+            10.
+
+        Returns
+        -------
+        Results : pd.DataFrame
+            Dataframe where index are the spots ID and columns are :
+                A_CLUSTER : Clusters ID (int) for the first clustering step.
+                A_SELECT : Selected spots for the first clustering (bool).
+                F_CLUSTER : Clusters ID (int) for the 2nd clustering step.
+                F_SELECT : Selected spots for the second clustering (bool).
+
+        """
+        # Getting the centroid.
+        centroids = [OAT.getCentroid(subdf.sample(cSample, axis=0)) \
+                     for k in range(cIter)]
         centroids = pd.DataFrame(centroids, columns=["X", "Y", "Z"])
-        centroid = [centroids["X"].mean(), centroids["Y"].mean(),
-                    centroids["Z"].mean()]
+        centroid = [centroids["X"].median(), 
+                    centroids["Y"].median(),
+                    centroids["Z"].median()]
+        
         # Computing the distance between each point and the centroid.
         distance = pd.Series(dtype = "float", name = "DISTANCE")
         for points in subdf.index:
-            distance[points] = OAT.euclid_distance(
+            distance[points] = OAT.euclidDist(
                 list(subdf.loc[points, ["X", "Y", "Z"]]), 
-                centroid
-                )
-        # Clustering the distances.
-        identified_clusters = DBSCAN(
-            eps=5, min_samples=6).fit_predict(distance.to_frame())
-        #Adding the first cluster results to the spots dataframe.
-        cluster = pd.Series(identified_clusters, index = subdf.index, 
-                            name = "A_CLUSTER")
-        # Creating the final dataframe which would be the output of this
-        # function.
-        Results = cluster.to_frame()
-        # Selecting the right cluster (closest to the center).    
-        isOrganoid = OAT.selectClusters(pd.concat([subdf, cluster], axis = 1),
-                                        volume_center, "A_CLUSTER")
-        isOrganoid.rename("A_SELECT", inplace = True)
-        # Adding the selection to the final dataframe.
-        Results = pd.concat([Results, isOrganoid], axis = 1)
-        # Changing the subdf, only keeping the selected cluster and clustering
-        # it once again.
-        subdf = subdf[isOrganoid]
-        identified_clusters = DBSCAN(
-            eps=eps, min_samples=min_samples).fit_predict(
-                subdf.loc[:,["X", "Y", "Z"]])
-        cluster = pd.Series(identified_clusters, index = subdf.index, 
-                            name = "F_CLUSTER")
-        Results = pd.concat([Results, cluster], axis = 1)
-        # Selecting the right cluster once again.
-        isOrganoid = OAT.selectClusters(pd.concat([subdf, cluster], axis = 1),
-                                        volume_center, "F_CLUSTER")
-        isOrganoid.rename("F_SELECT", inplace = True)
-        Results = pd.concat([Results, isOrganoid], axis = 1)
-        return Results
-    
-    def selectClusters(subdf, volume_center, cluster_col):
-        """
-        Search for the cluster that as the highest probability of being the
-        organoid cluster. Save the results as booleans in the self.spots 
-        dataframe.
-
-        """
-        # isOrganoid is a temporary pd.Series that contains booleans values
-        # for each spots. Tells if the spot is part of the organoid.
-        isOrganoid = pd.Series(dtype = "bool", name = "IS_ORGANOID")
-        # Processing for each frame.
-        # Retrieving the clusters with their ID and the number of spots
-        # within them.
-        clusters = subdf[cluster_col].value_counts()
-        clustersID = clusters.index
-        # Following list holds the distance from the centroid of clusters 
-        # to the center of the volume.
-        distance2center = []
-        # Computing the distance for each clusters.
-        for ID in clustersID :
-            centroid = OAT.getCentroid(subdf[subdf[cluster_col] == ID])
-            distance = OAT.euclid_distance(centroid, volume_center)
-            distance2center.append(distance)
-        # Converting the list to a pd.Series to add the ID inforamtions.
-        distance2center = pd.Series(distance2center, 
-                                       index = clustersID)
-        # Sorting from the lowest to the greatest distance.
-        distance2center.sort_values(ascending = True, inplace = True)
-        # Checking if the closest cluster to the center contains more
-        # than 10 spots. Choosing it if it is the case.
-        selectedCluster = 0
-        for idx in range(len(distance2center.index)):
-            if clusters[distance2center.index[idx]] >= 10:
-                selectedCluster = distance2center.index[idx]
-                break
-        # Merging the results to those of other clusters within the same
-        # file.
-        isOrganoid = pd.concat([isOrganoid, 
-                                subdf[cluster_col] == selectedCluster])
-        return isOrganoid
+                centroid)
         
-    def getClusters(self, eps = 40, min_samples = 3, df = "spots"):
+        # Clustering the distances and saving it as a pd.Series.
+        cluster = DBSCAN(eps=5, min_samples=6).fit_predict(distance.to_frame())
+        cluster = pd.Series(cluster, index = subdf.index, name = "A_CLUSTER")
+        
+        # Creating the final dataframe with the first clustering results.
+        Results = cluster.to_frame()
+        
+        # Selecting the cluster based on the OAT.selectCluster method.    
+        selected = OAT.selectCluster(pd.concat([subdf, cluster], axis = 1),
+                                     center, column = "A_CLUSTER",
+                                     threshold = threshold)
+        selected.name = "A_SELECT"
+        
+        # Adding the selection results to Results dataframe.
+        Results = pd.concat([Results, selected], axis = 1)
+        
+        # Keeping the selected spots for the next clustering step.
+        subdf = subdf[selected].loc[:,["X", "Y", "Z"]]
+        
+        # Clustering the spots.
+        cluster = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(subdf)
+        cluster = pd.Series(cluster, index = subdf.index, name = "F_CLUSTER")
+        
+        # Merging the clusters ID to the Results dataframe. 
+        Results = pd.concat([Results, cluster], axis = 1)
+        
+        # Selecting the right cluster once again using the same method.
+        selected = OAT.selectCluster(pd.concat([subdf, cluster], axis = 1),
+                                     center, column = "F_CLUSTER", 
+                                     threshold = threshold)
+        selected.name = "F_SELECT"
+        
+        # Merging the selection to the Results dataframe.
+        Results = pd.concat([Results, selected], axis = 1)
+        
+        # Filling the NaN values in the 2nd clustering results as some spots
+        # were not computed.
+        Results["F_CLUSTER"].fillna(100, inplace = True)
+        Results["F_SELECT"].fillna(False, inplace = True)
+        
+        return Results
+        
+    def getClusters(self, df = "spots", eps = 40, min_samples = 3, 
+                    cIter = 1000, cSample = 10, threshold = 10, 
+                    rescaling = [1, 1, 1]):
         """
-        Clustering spots for each frame and adding the data to the self.spots
-        dataframe.
+        Clustering the spots for each frame using the .clusteringEngine() 
+        method.
+
+        Parameters
+        ----------
+        df : str, optional
+            Name of the dataframe. The default is "spots".
+            It can be either "spots" or "tracks".
+        eps : int, optional
+            See .clusteringEngine() method. The default is 40.
+        min_samples : int , optional
+            See .clusteringEngine() method. The default is 3.
+        cIter :  int, optional
+            See .clusteringEngine() method. The default is 1000.
+        cSample : int, optional
+            See .clusteringEngine() method. The default is 10.
+        threshold : int, optional
+            See .clusteringEngine() method. The default is 10.
+        rescaling : list, otpional
+            Rescale the spots coordinates on each axis by the given value :
+                [Xratio, Yratio, Zratio].
+            The default is [1, 1, 1].
 
         """
-        if df == "tracks" : 
-            if hasattr(self, "tracks"):
-                data = self.tracks.loc[:,["X", "Y", "Z", "FILE"]]
+        # Selecting the dataframe on which the clustering will be done.
+        if df == "tracks" and hasattr(self, "tracks"): 
+            data = self.tracks.loc[:,["X", "Y", "Z", "FILE"]]
+        elif  df == "spots" and hasattr(self, "spots"):
+            data = self.spots.loc[:,["X", "Y", "Z", "FILE"]]
         else :
-            data = self.spots
-        # Saving the center coordinates of the volume.
-        volume_center = [self.VolShape[-axis]/2 for axis in range(len(
+            raise ValueError("The df is not supported or it doesn't exist")
+        
+        # Computing the coordinates of the volume's center.
+        center = [self.VolShape[-axis]/2 for axis in range(len(
             self.VolShape))]
-        res = pd.DataFrame(dtype = "float")
+        
+        # Clustering every spots, frame by frame and adding the results to the
+        # res temporary datafame.
+        Results = pd.DataFrame(dtype = "float")
         for file in self.files.index :
             subdf = data[data["FILE"] == file]
-            res = pd.concat([res, OAT.clusteringEngine(
-                OAT.coordTransformation(subdf, Zratio = 2),
-                volume_center
-                )])
-        res["F_CLUSTER"].fillna(10, inplace = True)
-        res["F_SELECT"].fillna(False, inplace = True)
+            subdf = OAT.reScaling(subdf, ratio = rescaling)
+            clusterResults = OAT.clusteringEngine(subdf, center, cIter,
+                                                  cSample, eps, min_samples,
+                                                  threshold)
+            Results = pd.concat([Results, clusterResults])
+            
+        # Adding the cluster infos to the right dataframe. 
         if df == "tracks":
-            self.tracks = pd.concat([self.tracks, res], axis = 1)
-        else :
-            self.spots = pd.concat([self.spots, res], axis = 1)
+            self.tracks = pd.concat([self.tracks, Results], axis = 1)
+        elif df == "spots":
+            self.spots = pd.concat([self.spots, Results], axis = 1)
     
-    def showSpots(self, filename, ROI = False, save = False, df = "spots"):
+    def showSpots(self, filename, ROI = False, save = False, df = "spots", 
+                  figsize = (20, 8), dpi = 400, color = "b", cmap = 'tab10'):
         """
         Create and shows a set of 3 scatterplots for each plane.
         Each one represent the spots of the given file, colored by cluster.
@@ -472,43 +574,72 @@ class OAT():
         ----------
         filename : str or list
             Name of the image file or list of the name of the image files. 
-            Do not include the '.tif'
-
-        Returns
-        -------
-        Figure
+            Do not include the '.tif'.
+            Use "all" to show the spots for all frames. 
+        ROI : bool, optional
+            If True, only show the spots within the ROI. The default is False.
+        save : bool, optional
+            If True, save the figure(s) in the \\output\\clustering directory.
+            The default is False.
+        df : str, optional
+            Name of the dataframe. The default is "spots".
+            It can be either "spots" or "tracks".
+        figsize : couple, optional
+            Size of the figure as matplotlib accept it. The default is (20, 8).
+        dpi : int, optional
+            DPI of the figure. The default is 400.
+        color : str, optional
+            Default matplotlib color if no clustering info. The default is "b".
+        cmap : str, optional
+            matplotlib cmap used when showing clusters. The default is "tab10".
 
         """
-        cmap = plt.cm.get_cmap('tab10')
-        if filename == "all" and save:
+        # Setting the cmap.
+        cmap = plt.cm.get_cmap(cmap)
+        
+        # If the user wants to see all frames.
+        if filename == "all":
             for file in self.files.index:
                 self.showSpots(file, ROI, save, df)
             return None
+        
+        # If the user wants several frames. 
+        elif type(filename) == list :
+            for file in filename:
+                self.showSpots(file, ROI, save, df)
+            return None
+        
+        # The actual figure generation.
         elif type(filename) == str :
-            fig, axs = plt.subplots(1, 3, 
-                                    figsize=(20, 6), dpi=400)
+            fig, axs = plt.subplots(1, 3, figsize = figsize, dpi = dpi)
+            
+            # Saving the different columns to look up depending on the view.
             planes = [["X","Y"],["X","Z"],["Y","Z"]]
             ROIcol = [[0, 2], [0, 4], [2, 4]]
+            
+            # Selecting the dataframe.
             if df == "spots":
                 subdf = self.spots[self.spots["FILE"] == filename]
             elif df == "tracks":
                 subdf = self.tracks[self.tracks["FILE"] == filename]
-            # Showing all the 3 planes.
+                
+            # 3 plane, 3 axes.
             for idx in range(3):
-                color = "b"
-                # Coloring the clusters if present
+                # Coloring the clusters if info are available.
                 if "F_SELECT" in subdf.columns :
                     color = subdf["F_CLUSTER"].map(cmap)
+                
+                # Plotting and labeling axis and title.
                 axs[idx].scatter(subdf[planes[idx][0]],
                                  subdf[planes[idx][1]],
                                  c = color)
                 axs[idx].set_xlabel(planes[idx][0])
                 axs[idx].set_ylabel(planes[idx][1])
                 axs[idx].set_title("File : "+filename+", View : "+\
-                                   planes[idx][0]+\
-                                   "*"+planes[idx][1])
-                # If there are cluster selection info, we add a legend 
-                # indicating what are the selected cells.
+                                   planes[idx][0]+"*"+planes[idx][1])
+                    
+                # If cluster info are available, adding a legend to show the
+                # selected one's color.
                 if "F_SELECT" in subdf.columns :
                     cluster_id = subdf[subdf["F_SELECT"]]["F_CLUSTER"][0]
                     legend = [Line2D([0], [0], marker = 'o', 
@@ -517,54 +648,23 @@ class OAT():
                                      markerfacecolor = cmap(cluster_id), 
                                      markersize=10)]
                     axs[idx].legend(handles = legend, loc = 'best')
+                
+                # If ROI has been computed and the user want to crop the 
+                # volume.
                 if hasattr(self, "ROI") and ROI:
-                    axs[idx].set_xlim([ self.ROI[ROIcol[idx][0]], 
-                                       self.ROI[ROIcol[idx][0]+1] ])
-                    axs[idx].set_ylim([ self.ROI[ROIcol[idx][1]], 
-                                       self.ROI[ROIcol[idx][1]+1] ])
-        elif type(filename) == list :
-            fig, axs = plt.subplots(len(filename), 3, 
-                                    figsize=(20, 6*len(filename)), dpi=400)
-            planes = [["X","Y"],["X","Z"],["Y","Z"]]
-            ROIcol = [[0, 2], [0, 4], [2, 4]]
-            for fileID in range(len(filename)):
-                if df == "spots":
-                    subdf = self.spots[self.spots["FILE"] == filename]
-                elif df == "tracks":
-                    subdf = self.tracks[self.tracks["FILE"] == filename]
-                # Showing all the 3 planes.
-                for idx in range(3):
-                    color = "b"
-                    # Coloring the clusters if present
-                    if "F_SELECT" in subdf.columns :
-                        color = subdf["F_CLUSTER"].map(cmap)
-                    axs[fileID, idx].scatter(subdf[planes[idx][0]],
-                                     subdf[planes[idx][1]],
-                                     c = color)
-                    axs[fileID, idx].set_xlabel(planes[idx][0])
-                    axs[fileID, idx].set_ylabel(planes[idx][1])
-                    axs[fileID, idx].set_title("File : "+filename[fileID]+\
-                                               ", View : "+planes[idx][0]+\
-                                                   "*"+planes[idx][1])
-                    # If there are cluster selection info, we add a legend 
-                    # indicating what are the selected cells.
-                    if "F_SELECT" in subdf.columns :
-                        cluster_id = subdf[subdf["F_SELECT"]]["F_CLUSTER"][0]
-                        legend = [Line2D([0], [0], marker = 'o', 
-                                         color = cmap(cluster_id), 
-                                         label = 'Selected spots', 
-                                         markerfacecolor = cmap(cluster_id), 
-                                         markersize=10)]
-                        axs[fileID, idx].legend(handles = legend, loc = 'best')
-                    if hasattr(self, "ROI") and ROI:
-                        axs[fileID, idx].set_xlim([ self.ROI[ROIcol[idx][0]], 
-                                           self.ROI[ROIcol[idx][0]+1] ])
-                        axs[fileID, idx].set_ylim([ self.ROI[ROIcol[idx][1]], 
-                                           self.ROI[ROIcol[idx][1]+1] ])
+                    axs[idx].set_xlim([self.ROI[ROIcol[idx][0]], 
+                                       self.ROI[ROIcol[idx][0]+1]])
+                    axs[idx].set_ylim([self.ROI[ROIcol[idx][1]], 
+                                       self.ROI[ROIcol[idx][1]+1]])
+        
+        # Adding the version of OAT.
         fig.text(0.08, 0.05, "OAT Version : "+str(self.version))
+        
+        # Saving if wanted. 
         if save :
-            plt.savefig(self.dir["root"]+"\\debug\\clusters\\"+filename+".png",
-                        dpi = 'figure')
+            plt.savefig(self.dir["spotsFigs"]+"\\"+filename+".png", dpi = dpi)
+        
+        # Showing the plot and closing it.
         plt.show()
         plt.close(fig)
         
@@ -584,34 +684,38 @@ class OAT():
             organoid.        
 
         """
+        # Exporting all spots, frame by frame, by calling back the method.
         if filename == "all":
             for file in self.files.index:
                 self.exportSpotsVTK(file, organoid, df)
+        
+        #Exporting the spots from the given frames, by calling back the method.
+        elif type(filename) == list:
+            for file in filename:
+                self.exportSpotsVTK(file, organoid, df) 
+        
+        # Actual export of the spots for the given file.
         elif type(filename) == str:
+            
+            # Selecting the wanted dataframe.
             if df == "spots":
                 subdf = self.spots[self.spots["FILE"] == filename]
             elif df == "tracks":
                 subdf = self.tracks[self.tracks["FILE"] == filename]
-            if "IS_ORGANOID" in subdf.columns and organoid:
-                subdf = subdf[subdf["IS_ORGANOID"]]
-                if df == "spots":
-                    PyVTK(filename+"_spots_organoid", subdf['X'], subdf['Y'], 
-                      subdf['Z'], self.dir["vtk"], "points")
-                elif df == "tracks":
-                    PyVTK(filename+"_tracks_organoid", subdf['X'], subdf['Y'], 
-                      subdf['Z'], self.dir["vtk"], "points")
-            else :
-                if df == "spots": 
-                    PyVTK(filename+"_spots", subdf['X'], subdf['Y'], 
-                          subdf['Z'], self.dir["vtk"], "points")
-                elif df == "tracks":
-                    PyVTK(filename+"_tracks", subdf['X'], subdf['Y'], 
-                          subdf['Z'], self.dir["vtk"], "points")
-        elif type(filename) == list:
-            for file in filename:
-                self.exportSpotsVTK(file, organoid, df)              
                 
-    def selectROI(subdf, std = 15):
+            # Selecting spots if available and if the user wants it.
+            if "F_SELECT" in subdf.columns and organoid:
+                subdf = subdf[subdf["IS_ORGANOID"]]
+                PyVTK(filename+"_"+df+"_organoid", subdf['X'], subdf['Y'], 
+                  subdf['Z'], self.dir["vtk"], "points")
+            
+            # Else, showing everything.
+            else :
+                PyVTK(filename+"_"+df, subdf['X'], subdf['Y'], 
+                      subdf['Z'], self.dir["vtk"], "points")
+                
+                
+    def selectROI(subdf, std = 15, eps = 2, min_samples = 3, offset = 5):
         """
         Method to get the most representative value from a pd.Series in the 
         context of the search of the ROI.
@@ -622,6 +726,14 @@ class OAT():
             Series or df column that contain values for a certain category.
         std : int
             Standard deviation threshold.
+        eps : int, optional
+            Radius of search for the DBSCAN algorithm. The default is 2.
+        min_samples : int , optional
+            Min. number of neighbors for DBSCAN. The default is 3.
+        offset : float, optional
+            Value to add or retrieve to the max or the min value to take into 
+            account the size of the real object. 
+            The default is 5.        
 
         Returns
         -------
@@ -629,69 +741,90 @@ class OAT():
             Best fitting value for the limit of the ROI.
 
         """
-        col = subdf.name
-        # if the standard deviation is very small, then we don't need to 
-        # cluster the values.
+        # If the standard deviation is small, we don't need to cluster, all
+        # spots are given the same clusterID (0).
         if subdf.std() <= std :
-            # Hacking the names to makes it works with the next part.
-            results = pd.Series(len(subdf.index)*[0], index = subdf.index, 
-                                name = col)
+            results = pd.Series(len(subdf.index)*[0], 
+                                index = subdf.index, 
+                                name = subdf.name)
+            
+        # Else, clustering with DBSCAN to get the most representative values.
         else :
-            # Clustering with KMeans as we expect few off points
-            results = KMeans(n_clusters = 3).fit_predict(subdf.to_frame())
-            results = pd.Series(results, index = subdf.index, name = col)
-        # Getting the value of the cluster with the highest number 
-        # of values. 
+            results = DBSCAN(eps = eps, min_samples = min_samples).fit_predict(
+                subdf.to_frame())
+            results = pd.Series(results, 
+                                index = subdf.index, 
+                                name = subdf.name)
+            
+        # Getting the biggest cluster ID.
         biggestClusterID = results.value_counts(ascending = False).index[0]
-        # Getting the side of the border : if "min" then we remove a
-        # a certain amount of the value et reverse for "max".
-        extreme = re.split("\_", col)[-1]
+        
+        # Getting the side of the limit (min or max)
+        extreme = re.split("\_", subdf.name)[-1]
+        
+        # Returning the limit value +/- an offset depending 
+        # on the side (min/max).
         if extreme == "min":
             value = subdf[results == biggestClusterID].min()
-            return value-5
+            return value-offset
         elif extreme == "max":
             value = subdf[results == biggestClusterID].max()
-            return value+5
+            return value+offset
                    
-    def getROI(self):
+    def getROI(self, std = 15, eps = 2, min_samples = 3, offset = 5):
         """
         Processing the limits of the ROI (region of interest).
-        The ROI is the cube where the organoid is, whatever the timepoint is.
-        These limits are saved in the self.ROI pandas.Series. 
+        The ROI is the smallest cubic volume where the organoid is, 
+        whatever the time point is.
+        These limits are saved in the self.ROI.
+        Limits for each frames are stored in the self.localROI.
+        
+        Parameters
+        ----------
+        std : int
+            Standard deviation threshold.
+        eps : int, optional
+            Radius of search for the DBSCAN algorithm. The default is 2.
+        min_samples : int , optional
+            Min. number of neighbors for DBSCAN. The default is 3.
+        offset : float, optional
+            Value to add or retrieve to the max or the min value to take into 
+            account the size of the real object. 
+            The default is 5.
         
         """
-        # Importing the spots. (Existence checks are handled by the called 
-        # method).
+        # Importing the spots..
         self.getSpots()
+        
         # Clustering the spots.
         self.getClusters()
-        # Temporary list containing the min/max for each axis. Each sublist   
-        # represent a file.
-        localROI = []
+        
+        # Creating the dataframe that contains all the ROI limits.
+        labels = ["X_min", "X_max", "Y_min", "Y_max", "Z_min", "Z_max"]
+        localROI = pd.DataFrame(columns = labels, dtype = "float")
+        
         # Getting the filenames of the processed images.
         filenames = self.spots["FILE"].value_counts().index
+        
+        # Computing the ROI frame by frame, and adding it to localROI. 
         for name in filenames :
             subdf = self.spots[self.spots["FILE"] == name]
             subdf = subdf[subdf["F_SELECT"]]
-            localROI.append([subdf["X"].min(), subdf["X"].max(),
-                            subdf["Y"].min(), subdf["Y"].max(),
-                            subdf["Z"].min(), subdf["Z"].max()])
-        # Merging all limits into a dataframe.
-        labels = ["X_min", "X_max", "Y_min", "Y_max", "Z_min", "Z_max"]
-        self.localROI = pd.DataFrame(localROI, index = filenames,
-                                       columns = labels)
-        # Searching for the general ROI by clustering on each axis and getting
-        # the mean value of the cluster.
-        self.ROI = pd.Series(len(labels)*[0], index = labels, name = "ROI")
-        # Browsing the columns in the self.localROI dataframe.
+            localROI.loc[name] = [subdf["X"].min(), subdf["X"].max(),
+                                  subdf["Y"].min(), subdf["Y"].max(),
+                                  subdf["Z"].min(), subdf["Z"].max()]
+        
+        # Creating the Series that will contain the global ROI.
+        self.ROI = pd.Series(index = labels, name = "ROI", dtype = "float")
+        
+        # Running selectROI() method on each column of localROI and adding the
+        # resulting value to self.ROI.
         for col in labels :
-            # Extracting the column.
-            subdf = self.localROI[col]
+            subdf = localROI[col]
             self.ROI[col] = OAT.selectROI(subdf)
-        # Adding the global ROI in the the local ROI as a checking measure.
-        self.localROI = pd.concat([self.localROI, self.ROI.to_frame().T], 
-                                  ignore_index = True)
-        self.localROI.index = list(filenames)+["ROI"]
+            
+        # Adding the global ROI in the local ROI dataframe.
+        self.localROI.loc["GLOBAL"] = list(self.ROI)
         
     def getArea(spot, radius, volShape):
         return [[x for x in range(int(spot["X"])-radius, 
@@ -701,39 +834,48 @@ class OAT():
                 [z for z in range(int(spot["Z"])-radius, 
                                   int(spot["Z"])+radius+1)]]
         
-    def denoising(self, file):
+    def denoising(ROI, file):
         """
-        Load a tiff image and set all pixels that are not in the ROI to 0.
+        Load a tif image and set all pixels that are not in the ROI to 0.
         Used in the cleanImage method.
 
         Parameters
         ----------
-        _file : str
+        ROI : pd.Series
+            Formatting is the same as self.ROI : Index are 
+            ["X_min", "X_max", "Y_min", "Y_max", "Z_min", "Z_max"].
+        file : str
             Path to the image.
 
         Returns
         -------
-        _imarray : np.array
+        imarray : np.array
             Denoised array of the image.
 
         """
         # Opening the image.
         image = io.imread(file)
-        # Converting into a Numpy array
+        
+        # Converting into a Numpy array. The shape is in this order : Z, Y, X.
         imarray = np.array(image)
-        # The shapes are in this order Z, Y and X!
+        
+        
         # For each axis, we get the coordinate (1D) of the pixels that needs to 
-        # be set to black. 
+        # be set to 0. 
         X_values = [X for X in range(imarray.shape[2]) if
-                     X < self.ROI["X_min"] or X > self.ROI["X_max"]]
+                     X < ROI["X_min"] or X > ROI["X_max"]]
         Y_values = [Y for Y in range(imarray.shape[1]) if
-                     Y < self.ROI["Y_min"] or Y > self.ROI["Y_max"]]
+                     Y < ROI["Y_min"] or Y > ROI["Y_max"]]
         Z_values = [Z for Z in range(imarray.shape[0]) if
-                     Z < self.ROI["Z_min"] or Z > self.ROI["Z_max"]]
+                     Z < ROI["Z_min"] or Z > ROI["Z_max"]]
+        
         # Setting the given pixel to 0 on each axis.
         imarray[Z_values,:,:] = 0
         imarray[:,Y_values,:] = 0
         imarray[:,:,X_values] = 0
+        
+        return imarray
+    
         ### IDEA : Removing spots from unwanted clusters.
         # # Removing last spots that could still be in the frames.
         # filename = re.split("\.tif", re.split(r"\\", file)[-1])[0]
@@ -745,72 +887,28 @@ class OAT():
         #             area = OAT.getArea(spot, 10, self.VolShape)
         #             print(area)
         #             imarray[area[2], area[1], area[0]] = 0
-        return imarray 
+        
         
     def cleanImage(self):
         """
-        Remove all of the image except for the ROI and proceed to save it in 
-        the ./data directory. The output is called "{sample}_tp.tif" where tp 
-        mean timepoint.
-        The tiff include timepoints and can be used in Trackmate to get tracks. 
+        Load all input images in the \\data\\organoid images directory. 
+        Then, set the pixels that are not in the ROI to 0. 
+        Save the cleaned image in \\data directory.
 
         """
         #Creating a temporary array.
         _4Darray = []
+        
         #Adding each 3D array in the list in chronological order.
-        for _file in self.files["tifs"]:
-            _4Darray.append(self.denoising(self.dir["tifs"]+'\\'+_file))
-        #Saving the tif with metadata.
+        for file in self.files["tifs"]:
+            _4Darray.append(self.denoising(self.ROI,
+                                           self.dir["tifs"]+'\\'+file))
+            
+        #Saving the tif with th correct metadata.
         tifffile.imwrite(self.dir["root"]+'\\data\\'+self.sample+"_tp.tif", 
                          np.array(_4Darray), 
                          imagej=True, metadata={'axes': 'TZYX'})
         
-    def readTracks(self):
-        """
-        Load tracks file ({sample}_re.csv and {sample}_rt.csv) in the 
-        data/tracks directory as self.tracks. 
-        re stands for raw edges and is the output file called "edge" in 
-        Trackmate. 
-        rt stands for raw tracks and is the output file called "track" in 
-        Trackmate.
-
-        """
-        # Importing the files.
-        self.importFiles("tracks")
-        tracks_df = pd.read_csv(self.tracks_csv)
-        edges_df = pd.read_csv(self.edges_csv)
-        #Removing the 3 first rows as they are redundant with labels
-        tracks_df.drop(index = [0, 1, 2], inplace = True)
-        edges_df.drop(index = [0, 1, 2], inplace = True)
-        #Setting the correct indexes
-        tracks_df.index = tracks_df["LABEL"]
-            #For this one, we set the first ID in the label cell to be the 
-            #index for the row because it is the starting spot of the edge.
-        edges_df.index = [re.split(" ", _lbl)[0] for _lbl in 
-                               edges_df["LABEL"]]
-        #Renaming some labels in order to be cleaner
-        for axis in ["X", "Y", "Z"]:
-            tracks_df.rename(columns = {"POSITION_"+axis:axis},
-                                  inplace = True)
-        edges_df.rename(columns = {"SPOT_TARGET_ID":"TARGET"}, 
-                             inplace = True)
-        #Keeping the interesting columns 
-        tracks_df = tracks_df.loc[:,["TRACK_ID", "QUALITY", "X", "Y", "Z", 
-                                     "FRAME"]]
-        edges_df = edges_df.loc[:,["TARGET", "EDGE_TIME"]]
-        #Setting the dataframes' values type as float
-        tracks_df = tracks_df.astype("float")
-        tracks_df["TRACK_ID"] = tracks_df["TRACK_ID"].astype("int")
-        edges_df = edges_df.astype("float")
-        # Setting the correct names for the files
-        tracks_df.rename(columns = {"FRAME": "FILE"}, inplace = True)
-        tracks_df["FILE"] = [self.files.iloc[int(k)].name \
-                             for k in tracks_df["FILE"]]
-        #Modifying the "Target" values to be Spot ids
-        edges_df["TARGET"] = ["ID"+str(int(_id)) for _id 
-                                   in edges_df["TARGET"]]
-        self.tracks = tracks_df.join(edges_df)
-     
     def buildTimeline(self):
         """
         Method to generate a pandas Series containing the spot order for each
@@ -853,6 +951,56 @@ class OAT():
                                         idx[0]]["TRACK_ID"] 
                                          for idx in _list])
         
+    def readTracks(self):
+        """
+        Load tracks file ({sample}_re.csv and {sample}_rt.csv) in the 
+        data/tracks directory as self.tracks. 
+        re stands for raw edges and is the output file called "edge" in 
+        Trackmate. 
+        rt stands for raw tracks and is the output file called "track" in 
+        Trackmate.
+
+        """
+        if not self.synthetic:
+            # Importing the files.
+            self.importFiles("tracks")
+            tracks_df = pd.read_csv(self.tracks_csv)
+            edges_df = pd.read_csv(self.edges_csv)
+            #Removing the 3 first rows as they are redundant with labels
+            tracks_df.drop(index = [0, 1, 2], inplace = True)
+            edges_df.drop(index = [0, 1, 2], inplace = True)
+            #Setting the correct indexes
+            tracks_df.index = tracks_df["LABEL"]
+                #For this one, we set the first ID in the label cell to be the 
+                #index for the row because it is the starting spot of the edge.
+            edges_df.index = [re.split(" ", _lbl)[0] for _lbl in 
+                                   edges_df["LABEL"]]
+            #Renaming some labels in order to be cleaner
+            for axis in ["X", "Y", "Z"]:
+                tracks_df.rename(columns = {"POSITION_"+axis:axis},
+                                      inplace = True)
+            edges_df.rename(columns = {"SPOT_TARGET_ID":"TARGET"}, 
+                                 inplace = True)
+            #Keeping the interesting columns 
+            tracks_df = tracks_df.loc[:,["TRACK_ID", "QUALITY", "X", "Y", "Z", 
+                                         "FRAME"]]
+            edges_df = edges_df.loc[:,["TARGET", "EDGE_TIME"]]
+            #Setting the dataframes' values type as float
+            tracks_df = tracks_df.astype("float")
+            tracks_df["TRACK_ID"] = tracks_df["TRACK_ID"].astype("int")
+            edges_df = edges_df.astype("float")
+            # Setting the correct names for the files
+            tracks_df.rename(columns = {"FRAME": "FILE"}, inplace = True)
+            tracks_df["FILE"] = [self.files.iloc[int(k)].name \
+                                 for k in tracks_df["FILE"]]
+            #Modifying the "Target" values to be Spot ids
+            edges_df["TARGET"] = ["ID"+str(int(_id)) for _id 
+                                       in edges_df["TARGET"]]
+            self.tracks = tracks_df.join(edges_df)
+        else :
+            self.tracks = pd.read_csv(self.dir["root"]+"\\tracks.csv")    
+        self.buildTimeline()
+        
     def processVectors(df):
         """
         Return the 2D or 3D vector between 2 points.
@@ -892,7 +1040,6 @@ class OAT():
         if filtering :
             self.getClusters(df="tracks")
             self.tracks = self.tracks[self.tracks["F_SELECT"]]
-        self.buildTimeline()
         #Creation of a dataframe that will store vectors as thet are computed.
         #Each row is a vector with its index being the ID of the origin spot
         #of the vector.
@@ -1175,7 +1322,7 @@ class OAT():
             if ID >= 1 :
                 vectors.loc[index-1] = list(
                     OAT.processVectors(centroids.iloc[ID-1:ID+1]))
-                drift.loc[index] = OAT.euclid_distance(centroids.iloc[ID], 
+                drift.loc[index] = OAT.euclidDist(centroids.iloc[ID], 
                                                        centroids.iloc[ID-1])
         if not hasattr(self, "data"):
             self.data = pd.DataFrame(index=self.files["time"])
@@ -1185,7 +1332,7 @@ class OAT():
         self.data = pd.concat([self.data, drift], axis = 1)
         
     def crossProduct(df):
-        #Return the crossproduct of the 2 vectors
+        # Return the cross product of the 2 vectors.
         A, B = df.iloc[0], df.iloc[1]
         return pd.Series([(A["vY"]*B["wZ"]-A["wZ"]-B["vY"]),
                           -(A["uX"]*B["wZ"]-A["wZ"]*B["uX"]),
@@ -1196,17 +1343,34 @@ class OAT():
         #Compute the rotation axis for each frame or time point
         rotationAxisVectors = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
                                            dtype = "float")
+        CP = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
+                                    dtype = "float")
+        time = []
         for file in self.files.index:
             subdf = self.tracks[self.tracks["FILE"] == file]
-            crossproduct = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
+            res = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
                                         dtype = "float")
+            time += 1000*[self.files.loc[file, 'time']]
             for iteration in range(1000):
                 sample = subdf.sample(2)
                 sample = sample.loc[:,["uX", "vY", "wZ"]]
-                crossproduct.loc[iteration] = OAT.crossProduct(sample)
-                crossproduct.dropna()
+                res.loc[iteration] = OAT.crossProduct(sample)
+            CP = pd.concat([CP, res], axis = 0, ignore_index = True)
+            res.dropna(inplace=True)
             rotationAxisVectors.loc[
-                self.files.loc[file, "time"]] = crossproduct.mean()
+                self.files.loc[file, "time"]] = res[["uX", "vY", "wZ"]].mean()
+        CP["time"] = time
+        CP.dropna(inplace=True)
+        dX, dY, dZ = [], [], []
+        for tp in self.files["time"] :
+            subdf = CP[CP["time"] == tp]
+            dX += list(self.data.loc[tp ,"cX"]+subdf["uX"])
+            dY += list(self.data.loc[tp, "cY"]+subdf["vY"])
+            dZ += list(self.data.loc[tp, "cZ"]+subdf["wZ"])
+        CP["DX"] = dX
+        CP["DY"] = dY
+        CP["DZ"] = dZ    
+        self.CrossProducts = CP
         if drift and "c_uX" in self.data.columns: 
             for tp in self.data.index:
                 rotationAxisVectors["uX"] = (
@@ -1242,6 +1406,33 @@ class OAT():
         print("This roughly correspond to ", self.summary["distance/radius"], 
               " of the radius of the organoid.")
         self.computeRotationAxis()
+        
+    def plot_figs(fig_num):
+        fig = plt.figure(fig_num, figsize=(4, 3))
+        plt.clf()
+        ax = fig.add_subplot(111, projection="3d")
+        X = T.CrossProducts[T.CrossProducts["time"] == 0][["DX","DY","DZ"]]
+        #ax.scatter(X["DX"], X["DY"], X["DZ"], alpha=0.1)
+    
+        # Using SciPy's SVD, this would be:
+        # _, pca_score, Vt = scipy.linalg.svd(Y, full_matrices=False)
+    
+        pca = PCA(n_components=3)
+        pca.fit(X)
+        V = pca.components_.T
+    
+        x_pca_axis, y_pca_axis, z_pca_axis = 3 * V
+        x_pca_plane = np.r_[x_pca_axis[:2], -x_pca_axis[1::-1]]
+        y_pca_plane = np.r_[y_pca_axis[:2], -y_pca_axis[1::-1]]
+        z_pca_plane = np.r_[z_pca_axis[:2], -z_pca_axis[1::-1]]
+        x_pca_plane.shape = (2, 2)
+        y_pca_plane.shape = (2, 2)
+        z_pca_plane.shape = (2, 2)
+        ax.plot_surface(x_pca_plane, y_pca_plane, z_pca_plane)
+        ax.w_xaxis.set_ticklabels([])
+        ax.w_yaxis.set_ticklabels([])
+        ax.w_zaxis.set_ticklabels([])
+        plt.show
             
     def showData(self):
         features = self.data.columns
@@ -1272,11 +1463,11 @@ class OAT():
 if __name__ == "__main__":
     T = OAT(fiji_dir = r"C:\Apps\Fiji.app", wrk_dir = r"D:\Wrk\Datasets\1")
     T.loadTif()
-    #T.getROI()
-    T.getVectors(filtering = False)
-    T.computeStats()
-    T.showData()
-    T.animVectors()
+    T.getROI()
+    # T.getVectors(filtering = False)
+    # T.computeStats()
+    # T.showData()
+    # T.animVectors()
 
             
 ### NO USE AT THE MOMENT ------------------------------------------------------
@@ -1287,7 +1478,7 @@ if __name__ == "__main__":
 #     for _index in spots_df.index:
 #         point = [spots_df.loc[_index][axis] 
 #                  for axis in ["X", "Y", "Z"]]
-#         _sum += (OAT.euclid_distance(point, [x, y, z])-r)
+#         _sum += (OAT.euclidDist(point, [x, y, z])-r)
 #     return _sum   
 
 # def get_spheroid_model(spots_df):
@@ -1303,7 +1494,7 @@ if __name__ == "__main__":
 #     return [results['x'][0], results['x'][1], results['x'][2], 
 #             results['x'][2], OAT.minimizing_func(results['x'])]
 
-# def selectClusters(self, spots_df):
+# def selectCluster(self, spots_df):
 #     """
 #     Method to return a filtered version of the spots_df where only the 
 #     spots that appear to be part of the organoid remains.
@@ -1330,11 +1521,11 @@ if __name__ == "__main__":
 #     # clusters for the given criteria.
 #     leaderboard = [[], []]
 #     distance_to_center = []
-#     volume_center = list(self.volume_shape)
-#     volume_center.reverse()
+#     center = list(self.volume_shape)
+#     center.reverse()
 #     for idx in cluster_ids :
 #         centroid = OAT.getCentroid(spots_df[spots_df["CLUSTER"] == idx])
-#         distance = OAT.euclid_distance(centroid, volume_center)
+#         distance = OAT.euclidDist(centroid, center)
 #         distance_to_center.append(distance)
 #     distance_to_center = pd.Series(distance_to_center, index = cluster_ids)
 #     distance_to_center.sort_values(ascending = False, inplace = True)
@@ -1360,11 +1551,11 @@ if __name__ == "__main__":
 
 #     """
 #     #Clustering using DBSCAN.
-#     identified_clusters = DBSCAN(
+#     cluster = DBSCAN(
 #         eps=eps, min_samples=min_samples).fit_predict(
 #             subdf.loc[:,["X", "Y", "Z"]])
 #     #Adding the cluster results to the spots dataframe.
-#     cluster = pd.Series(identified_clusters, index = subdf.index, 
+#     cluster = pd.Series(cluster, index = subdf.index, 
 #                         name = "CLUSTER")
 #     return cluster   
 
@@ -1380,7 +1571,7 @@ if __name__ == "__main__":
 #         for spot in r_tracks[r_tracks["FILE"] == file].index:
 #             index.append(spot)
 #             c_df.append(centroid)
-#             distance[spot] = OAT.euclid_distance(
+#             distance[spot] = OAT.euclidDist(
 #                 list(r_tracks.loc[spot, ["X", "Y", "Z"]]), 
 #                 centroid
 #                 )
