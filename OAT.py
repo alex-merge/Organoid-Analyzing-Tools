@@ -4,7 +4,7 @@ organoid_tracking_tools (OAT) is a set of methods that integrates FIJI's
 Trackmate csv files output to process cell displacement within an organoid.
 
 @author: Alex-932
-@version: 0.5.1
+@version: 0.5.2
 """
 
 import os
@@ -59,7 +59,7 @@ class OAT():
         
         # Building the directories tree
         self.buildTree()
-        self.version = "0.5.1"      
+        self.version = "0.5.2"      
          
     def buildTree(self):
         """
@@ -821,9 +821,10 @@ class OAT():
         # resulting value to self.ROI.
         for col in labels :
             subdf = localROI[col]
-            self.ROI[col] = OAT.selectROI(subdf)
+            self.ROI[col] = OAT.selectROI(subdf, std, eps, min_samples, offset)
             
         # Adding the global ROI in the local ROI dataframe.
+        self.localROI = localROI
         self.localROI.loc["GLOBAL"] = list(self.ROI)
         
     def getArea(spot, radius, volShape):
@@ -892,192 +893,215 @@ class OAT():
     def cleanImage(self):
         """
         Load all input images in the \\data\\organoid images directory. 
-        Then, set the pixels that are not in the ROI to 0. 
-        Save the cleaned image in \\data directory.
+        Then, runs the denoising() function on it. 
+        Merge and save the cleaned image in \\data directory.
 
         """
-        #Creating a temporary array.
-        _4Darray = []
+        #Creating the 4D array.
+        imarray = []
         
         #Adding each 3D array in the list in chronological order.
         for file in self.files["tifs"]:
-            _4Darray.append(self.denoising(self.ROI,
+            imarray.append(OAT.denoising(self.ROI,
                                            self.dir["tifs"]+'\\'+file))
             
         #Saving the tif with th correct metadata.
         tifffile.imwrite(self.dir["root"]+'\\data\\'+self.sample+"_tp.tif", 
-                         np.array(_4Darray), 
+                         np.array(imarray), 
                          imagej=True, metadata={'axes': 'TZYX'})
         
-    def buildTimeline(self):
+    def computeSpotsLinks(self):
         """
-        Method to generate a pandas Series containing the spot order for each
-        track and saving it as self.spots_timeline.
-    
-        Returns
-        -------
-        None.
-    
+        Generate a Series containing , for each track (row), the list of 
+        spots ID that they are composed of, in chronological order.
+        The Series is called self.spotsLinks.
+
         """
-        #Extracting the column that give the target of a spot (next spot)
-        #For each row, the index is the sources and the value is the target 
-        _links = self.tracks["TARGET"]
-        #Sources who don't have any targets are the ending spots of a track
-        #We will construct the list in reverse and reverse it at the end
-        _enders = _links[_links.isnull()].index
-        #_list is a list of sublists where each sublist is one track
-        _list = [[_id] for _id in _enders]
-        #Looping until we can't find any backward links (so it's done)
-        _unfinished = True
-        while _unfinished:
-            _unfinished = False
-            for _track in _list:
-                #_track is the sublist reffered to in the last comment
+        # Getting the target for each spots.
+        links = self.tracks["TARGET"]
+        
+        # Every Nan means that the spots has no target, so it is the last one.
+        # We will build the lists by going backward.
+        enders = links[links.isnull()].index
+        
+        # Creating the final list and creating the sublists with the enders ID.
+        spotsLinks = [[ID] for ID in enders]
+        
+        # Looping the spots until no backward link is established.
+        unfinished = True
+        
+        while unfinished:
+            unfinished = False
+            
+            for track in spotsLinks:
+                # Trying to add the ID of the previous spots from the last spot
+                # in the sublist.
                 try : 
-                    #We add the ID of the previous source by looking at the
-                    #index of the row where the target id match the last
-                    #element of the _track sublist
-                    _track.append(_links[_links == _track[-1]].index[0])
-                    #There is an established connection, there could be others
-                    _unfinished = True
+                    track.append(links[links == track[-1]].index[0])
+                    # If it works, then there is a connection.
+                    unfinished = True
                 except :
                     pass
-        #Reversing each sublist to have the spots in the timeorder
-        for _track in _list :
-            _track.reverse()
-        #Finally we save the _list as a pandas Series where the indexes are 
-        #the track_id for each sequence (values here)
-        self.spots_timeline = pd.Series(_list, index = [self.tracks.loc[
-                                        idx[0]]["TRACK_ID"] 
-                                         for idx in _list])
+        
+        # Reversing each sublist.
+        for track in spotsLinks :
+            track.reverse()
+        
+        # Saving the info.
+        self.spotsLinks = pd.Series(spotsLinks, 
+                                    index = [
+                                        self.tracks.loc[idx[0]]["TRACK_ID"] 
+                                        for idx in spotsLinks])
         
     def readTracks(self):
         """
-        Load tracks file ({sample}_re.csv and {sample}_rt.csv) in the 
-        data/tracks directory as self.tracks. 
-        re stands for raw edges and is the output file called "edge" in 
-        Trackmate. 
-        rt stands for raw tracks and is the output file called "track" in 
-        Trackmate.
+        Load tracks file (tracks.csv and edges.csv) in the 
+        \\data\\tracks directory as a DataFrame called self.tracks. 
+        
+        tracks.csv correspond to the .csv you can get by saving the dataset 
+        found in tracks>spots.
+        
+        tracks.csv correspond to the .csv you can get by saving the dataset 
+        found in tracks>edges.
 
         """
-        if not self.synthetic:
-            # Importing the files.
-            self.importFiles("tracks")
-            tracks_df = pd.read_csv(self.tracks_csv)
-            edges_df = pd.read_csv(self.edges_csv)
-            #Removing the 3 first rows as they are redundant with labels
-            tracks_df.drop(index = [0, 1, 2], inplace = True)
-            edges_df.drop(index = [0, 1, 2], inplace = True)
-            #Setting the correct indexes
-            tracks_df.index = tracks_df["LABEL"]
-                #For this one, we set the first ID in the label cell to be the 
-                #index for the row because it is the starting spot of the edge.
-            edges_df.index = [re.split(" ", _lbl)[0] for _lbl in 
-                                   edges_df["LABEL"]]
-            #Renaming some labels in order to be cleaner
-            for axis in ["X", "Y", "Z"]:
-                tracks_df.rename(columns = {"POSITION_"+axis:axis},
-                                      inplace = True)
-            edges_df.rename(columns = {"SPOT_TARGET_ID":"TARGET"}, 
-                                 inplace = True)
-            #Keeping the interesting columns 
-            tracks_df = tracks_df.loc[:,["TRACK_ID", "QUALITY", "X", "Y", "Z", 
-                                         "FRAME"]]
-            edges_df = edges_df.loc[:,["TARGET", "EDGE_TIME"]]
-            #Setting the dataframes' values type as float
-            tracks_df = tracks_df.astype("float")
-            tracks_df["TRACK_ID"] = tracks_df["TRACK_ID"].astype("int")
-            edges_df = edges_df.astype("float")
-            # Setting the correct names for the files
-            tracks_df.rename(columns = {"FRAME": "FILE"}, inplace = True)
-            tracks_df["FILE"] = [self.files.iloc[int(k)].name \
-                                 for k in tracks_df["FILE"]]
-            #Modifying the "Target" values to be Spot ids
-            edges_df["TARGET"] = ["ID"+str(int(_id)) for _id 
-                                       in edges_df["TARGET"]]
-            self.tracks = tracks_df.join(edges_df)
-        else :
-            self.tracks = pd.read_csv(self.dir["root"]+"\\tracks.csv")    
-        self.buildTimeline()
+        # Importing the files.
+        self.importFiles("tracks")
+        tracks_df = pd.read_csv(self.tracks_csv)
+        edges_df = pd.read_csv(self.edges_csv)
         
-    def processVectors(df):
+        # Removing the 3 first rows as they are redundant with the labels
+        tracks_df.drop(index = [0, 1, 2], inplace = True)
+        edges_df.drop(index = [0, 1, 2], inplace = True)
+        
+        # Setting the spots ID as index in both dataframes.
+        tracks_df.index = tracks_df["LABEL"]
+        edges_df.index = [re.split(" ", _lbl)[0] for _lbl in 
+                               edges_df["LABEL"]]
+        
+        # Renaming some labels in order to be cleaner
+        for axis in ["X", "Y", "Z"]:
+            tracks_df.rename(columns = {"POSITION_"+axis:axis},
+                                  inplace = True)
+        edges_df.rename(columns = {"SPOT_TARGET_ID":"TARGET"}, 
+                        inplace = True)
+        tracks_df.rename(columns = {"POSITION_T":"TP"}, inplace = True)
+        
+        # Keeping the interesting columns 
+        tracks_df = tracks_df.loc[:,["TRACK_ID", "QUALITY", "X", "Y", "Z", "T", 
+                                     "FRAME"]]
+        edges_df = edges_df.loc[:,"TARGET"]
+        
+        # Setting the dataframes' values type
+        tracks_df = tracks_df.astype("float")
+        tracks_df["TRACK_ID"] = tracks_df["TRACK_ID"].astype("int")
+        edges_df = edges_df.astype("float")
+        
+        # Setting the correct names for the files
+        tracks_df.rename(columns = {"FRAME": "FILE"}, inplace = True)
+        tracks_df["FILE"] = [self.files.iloc[int(k)].name \
+                             for k in tracks_df["FILE"]]
+            
+        # Modifying the "Target" values to be spots ID.
+        edges_df["TARGET"] = ["ID"+str(int(_id)) for _id 
+                                   in edges_df["TARGET"]]
+        
+        # Merging the 2 dataframes.
+        self.tracks = tracks_df.join(edges_df)
+        
+        # Computing the links between spots.
+        self.computeSpotsLinks()
+        
+    def computeVectors(PtA, PtB, toList = False):
         """
-        Return the 2D or 3D vector between 2 points.
-    
+        Return the 2D or 3D displacement vector between 2 points.
+        The vector is oriented from PtA to PtB. 
+        Both input must have the same dimension.
+        
         Parameters
         ----------
-        df : pd.DataFrame
-            Indexes are the IDs, labels are the axis. The first row is the 
-            origin and the second one is the destination.
-    
+        PtA : list or pd.Series
+            List or Series containing the coordinates values. For example :
+            [X, Y, Z].
+        PtB : list or pd.Series
+            List or Series containing the coordinates values. For example :
+            [X, Y, Z].
+        toList : bool, optional
+            Force to save the vectors coordinates as a list.
+        
         Returns
         -------
-        pd.Series
-            Indexes are axis, the order is the same as the input one.
+        list or pd.Series
+            Return the coordinates of the vector in the same format as PtA.
     
         """
-        _list = [df.iloc[1][_axis] - df.iloc[0][_axis] for _axis in df.columns]
-        return pd.Series(_list, index = df.columns, dtype="float") 
+        vect = [PtB[axis] - PtA[axis] for axis in range(len(PtA))]
+        
+        if type(PtA) == list or toList:
+            return vect
+        else :
+            return pd.Series(vect, index = PtA.index, dtype="float") 
     
-    def getVectors(self, filtering = False):
+    def getVectors(self, filtering = False, reimport = False):
         """
-        Compute displacement vectors for every spots in the 
-        dataframe and add them to it.
+        Compute displacement vectors for every spots in the tracks dataframe 
+        and add them to it.
+        
         Vectors are computed based on the sequence of the track they're in.
         That means that vectors are computed between 2 following spots of a 
         given track.
-        They are saved in the same line as the origin spot that served the
-        vector's calculation.
-    
-        Returns
-        -------
-        Update self.tracks.
+        
+        They are saved in the same line as the origin spot of the vector.
+        
+        Parameters
+        ----------
+        filtering : bool, optional
+            If True, use getClusters() on tracks dataframe and keep the 
+            selected ones (F_SELECT = True).
+        reimport : bool, optional
+            If True, reimport self.tracks.
     
         """
-        #Creation of the timeline table for every tracks
-        self.readTracks()
-        if filtering :
+        # Importing the tracks if not done or if user wants to reimport it.
+        if not hasattr(self, "tracks") or reimport:
+            self.readTracks()
+        
+        # Removing the previous computation of the vectors in case it already 
+        # has been done.
+        if "uX" in self.tracks.columns:
+            self.tracks.drop(columns = ["uX", "vY", "wZ"], inplace = True)
+                      
+        # Clustering and removing bad spots in self.tracks dataframe if it 
+        # hasn't already been done.     
+        if filtering and "F_SELECT" not in self.tracks.columns:
             self.getClusters(df="tracks")
             self.tracks = self.tracks[self.tracks["F_SELECT"]]
-        #Creation of a dataframe that will store vectors as thet are computed.
-        #Each row is a vector with its index being the ID of the origin spot
-        #of the vector.
-        vectors = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
-                                 dtype = "float")
-        #Browsing the timeline table where _trackidx is the track id.
-        for trackidx in self.spots_timeline.index :
-            #_list will store every vectors coordinates as a sublist.
-            _list = []
-            #Now we browse by index the list that contains all the spot ID's in
-            #chronological order for a given track (trackidx).
-            for spot in range(len(self.spots_timeline[trackidx])-1) :
-                #subdf is a subset of the self.tracks Dataframe which 
-                #contains the X, Y, Z coordinates as columns of 2 spots. The 
-                #spots are ordered that way : origin and the destination.
-                subdf = self.tracks.loc[
-                    [self.spots_timeline[trackidx][spot], 
-                     self.spots_timeline[trackidx][spot+1]
-                     ], ["X", "Y", "Z"]]
-                #res just retrieve the series we get with the processVectors
-                #method.
-                res = OAT.processVectors(subdf)
-                #We add the coordinates as a sublist in _list. Note that we
-                #don't use Series in this case because all the coordinates are 
-                #always in the same order (X, Y, Z) in this class.
-                _list.append([x for x in res])
-            #Adding a null vector for index reasons as the last spot don't have
-            #vector.
-            _list.append([np.nan]*3)
-            #For each track, the lines with the origin spot as index and 
-            #its given coordinates are concatenated to the vectors Dataframe.
-            vectors = pd.concat([vectors, 
-                                 pd.DataFrame(_list, 
-                                    index = self.spots_timeline[trackidx],
-                                    columns = ["uX", "vY", "wZ"])])
-        #We concatenate the vectors Dataframe with self.tracks. As they  
-        #have the same index, data (vector coordinates) are added in new 
-        #columns.
+            
+        # Creating a dataframe to store vectors as they are computed.
+        # Each row is a vector with its index being the ID of its origin spot.
+        vectors = pd.DataFrame(columns = ["uX", "vY", "wZ"], dtype = "float")
+        
+        # Computing vectors, track by track.
+        for trackID in self.spotsLinks.index :
+            for spot in range(len(self.spotsLinks[trackID])-1) :
+                
+                # Retrieving spot and target spot IDs.
+                spotID = self.spotsLinks[trackID][spot]
+                nextSpotID = self.spotsLinks[trackID][spot+1]
+                
+                # Retrieving the spot and target spot coordinates
+                spotInfo = self.track.loc[spotID, ["X", "Y", "Z"]]
+                nextSpotInfo = self.track.loc[nextSpotID, ["X", "Y", "Z"]]
+                
+                # Adding the computed vectors to the vectos dataframe.
+                vectors[spotID] = OAT.computeVectors(spotInfo, 
+                                                     nextSpotInfo,
+                                                     toList = True)
+                
+            # Adding a null vector as the last spot don't have any vector.
+            vectors[self.spotsLinks[trackID][-1]] = 3*[np.nan]
+            
+        # Merging the vectors dataframe to self.tracks. 
         self.tracks = pd.concat([self.tracks, vectors], axis = 1) 
         
     def showVectors(self, TP, angles = None, label = "3D",
@@ -1090,7 +1114,7 @@ class OAT():
         Parameters
         ----------
         TP : float
-            Timepoint.
+            Time point.
         angles : tuple, optional
             Viewing angle as follow (lat,long). The default is np.nan as for 
             default.
@@ -1136,14 +1160,17 @@ class OAT():
         if label == "X":
             ymax, ymin = subdf["Y"].max(), subdf["Y"].min()
             ax.set_ylim3d([ymax-(ymax-ymin)/2, ymax+10])
+            ax.set_yticks([])
             #print([ymax-(ymax-ymin)/2, ymax+10])
         elif label == "Y":
             xmax, xmin = subdf["X"].max(), subdf["X"].min()
             ax.set_xlim3d([xmax-(xmax-xmin)/2, xmax+10])
+            ax.set_xticks([])
             #print([xmax-(xmax-xmin)/2, xmax+10])
         elif label == "Z":
             zmax, zmin = subdf["Z"].max(), subdf["Z"].min()
             ax.set_zlim3d([zmax-(zmax-zmin)/2, zmax+10])
+            ax.set_zticks([])
             #print([zmax-(zmax-zmin)/2, zmax+10])
         #Setting the viewing angle if provided and renaming the figure to
         #include the angle information
@@ -1211,17 +1238,33 @@ class OAT():
         #Releasing and effectively saving the videofile
         out.release()
         
-    def exportVectorsVTK(self):
+    def exportVectorsVTK(self, tp = "all", tracks = "all"):
         #Retrieving available timepoints and keeping those who have more than 
-        #10 spots. That way we remove incorrect vectors. 
-        TP_list = [k 
-                    for k in self.tracks["EDGE_TIME"].value_counts().index 
-                    if self.tracks["EDGE_TIME"].value_counts()[k] >= 10]
-        _tracks_list = [k for k in 
-                        self.tracks["TRACK_ID"].value_counts().index]
-        #Sorting the list.
+        #10 spots. That way we remove incorrect vectors.
+        
+        # Creating the list of time points to show by the user choice.
+        if tp == "all":
+            TP_list = [k for k in self.tracks["EDGE_TIME"].value_counts().index 
+                        if self.tracks["EDGE_TIME"].value_counts()[k] >= 10]
+        elif type(tp) == list:
+            TP_list = tp
+        elif type(tp) == int:
+            TP_list = [tp]
+        
+        # Creating the list of tracks that will be exported.
+        if tracks == "all":
+            tracks_list = [k for k in 
+                           self.tracks["TRACK_ID"].value_counts().index]
+        elif type(tracks) == list:
+            tracks_list = tracks
+        elif type(tracks) == int:
+            tracks_list = [tracks]
+        
+        # Sorting the list of time point because we want to increment following
+        # the chronological order. 
         TP_list.sort()
-        _tracks_list.sort()
+        tracks_list.sort()
+        
         #Saving points coordinates in 3 dataframes, one for each axis. Rows are
         #timepoints and columns are tracks.
         list_X, list_Y, list_Z = [], [], []
@@ -1234,7 +1277,7 @@ class OAT():
             list_X.append([])
             list_Y.append([])
             list_Z.append([])
-            for track in _tracks_list :
+            for track in tracks_list :
                 #Retrieving the point data  
                 _point_data = subdf.loc[subdf["TRACK_ID"] == track]
                 #Checking if the point exist. If it doesn't then we enter no 
@@ -1249,11 +1292,11 @@ class OAT():
                     list_Y[-1].append(_point_data["Y"][0])
                     list_Z[-1].append(_point_data["Z"][0])
         Xpoints = pd.DataFrame(list_X, index = TP_list, 
-                                    columns = _tracks_list)
+                                    columns = tracks_list)
         Ypoints = pd.DataFrame(list_Y, index = TP_list, 
-                                    columns = _tracks_list)
+                                    columns = tracks_list)
         Zpoints = pd.DataFrame(list_Z, index = TP_list, 
-                                    columns = _tracks_list)
+                                    columns = tracks_list)
         #Filling the empty values : if the track start later, we fill previous
         #positions with the starting one (bfill). We do the same thing the 
         #other way when it stop sooner (ffill).
@@ -1297,7 +1340,7 @@ class OAT():
             centroid = OAT.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
             temp_df = pd.DataFrame([center, centroid], 
                                    columns = ["X", "Y", "Z"])
-            translation = OAT.processVectors(temp_df)
+            translation = OAT.computeVectors(temp_df)
             new_coords = []
             for spot in subdf.index:
                 new_coords.append([subdf.loc[spot, "X"]+translation["X"],
@@ -1321,7 +1364,7 @@ class OAT():
                 subdf.loc[:,["X", "Y", "Z"]])
             if ID >= 1 :
                 vectors.loc[index-1] = list(
-                    OAT.processVectors(centroids.iloc[ID-1:ID+1]))
+                    OAT.computeVectors(centroids.iloc[ID-1:ID+1]))
                 drift.loc[index] = OAT.euclidDist(centroids.iloc[ID], 
                                                        centroids.iloc[ID-1])
         if not hasattr(self, "data"):
@@ -1463,8 +1506,8 @@ class OAT():
 if __name__ == "__main__":
     T = OAT(fiji_dir = r"C:\Apps\Fiji.app", wrk_dir = r"D:\Wrk\Datasets\1")
     T.loadTif()
-    T.getROI()
-    # T.getVectors(filtering = False)
+    #T.getROI()
+    T.getVectors(filtering = False)
     # T.computeStats()
     # T.showData()
     # T.animVectors()
@@ -1578,7 +1621,7 @@ if __name__ == "__main__":
 #             tempdf = pd.DataFrame(
 #                 [list(r_tracks.loc[spot, ["X", "Y", "Z"]]),
 #                  centroid], columns = ["X", "Y", "Z"])
-#             res.append(list(OAT.processVectors(tempdf)))
+#             res.append(list(OAT.computeVectors(tempdf)))
 #     res = pd.DataFrame(res, columns = ["dX","dY","dZ"], index = index, 
 #                        dtype = "float")
 #     c_df = pd.DataFrame(c_df, index = index, columns = ["cX", "cY", "cZ"],
