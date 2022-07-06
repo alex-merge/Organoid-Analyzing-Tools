@@ -4,7 +4,7 @@ organoid_tracking_tools (OAT) is a set of methods that integrates FIJI's
 Trackmate csv files output to process cell displacement within an organoid.
 
 @author: Alex-932
-@version: 0.5.2
+@version: 0.6.0
 """
 
 import os
@@ -59,7 +59,7 @@ class OAT():
         
         # Building the directories tree
         self.buildTree()
-        self.version = "0.5.2"      
+        self.version = "0.6.0"      
          
     def buildTree(self):
         """
@@ -131,7 +131,7 @@ class OAT():
                 self.files["tifs"] = tifs
                 self.files.index = [re.split("\.tif", file)[0] 
                                     for file in tifs]
-                self.files["time"] = [k for k in range(len(self.files.index))]
+                self.files["TP"] = [k for k in range(len(self.files.index))]
                 self.sample = os.path.commonprefix(list(self.files["tifs"]))
                 
         # Checking csv files related to spots.
@@ -975,9 +975,8 @@ class OAT():
         edges_df.drop(index = [0, 1, 2], inplace = True)
         
         # Setting the spots ID as index in both dataframes.
-        tracks_df.index = tracks_df["LABEL"]
-        edges_df.index = [re.split(" ", _lbl)[0] for _lbl in 
-                               edges_df["LABEL"]]
+        tracks_df.index = "ID"+tracks_df["ID"].astype("str")
+        edges_df.index = "ID"+edges_df["SPOT_SOURCE_ID"].astype("str")
         
         # Renaming some labels in order to be cleaner
         for axis in ["X", "Y", "Z"]:
@@ -988,8 +987,8 @@ class OAT():
         tracks_df.rename(columns = {"POSITION_T":"TP"}, inplace = True)
         
         # Keeping the interesting columns 
-        tracks_df = tracks_df.loc[:,["TRACK_ID", "QUALITY", "X", "Y", "Z", "T", 
-                                     "FRAME"]]
+        tracks_df = tracks_df.loc[:,["TRACK_ID", "QUALITY", "X", "Y", "Z", 
+                                     "TP", "FRAME"]]
         edges_df = edges_df.loc[:,"TARGET"]
         
         # Setting the dataframes' values type
@@ -1001,13 +1000,12 @@ class OAT():
         tracks_df.rename(columns = {"FRAME": "FILE"}, inplace = True)
         tracks_df["FILE"] = [self.files.iloc[int(k)].name \
                              for k in tracks_df["FILE"]]
-            
+        
         # Modifying the "Target" values to be spots ID.
-        edges_df["TARGET"] = ["ID"+str(int(_id)) for _id 
-                                   in edges_df["TARGET"]]
+        edges_df = "ID" + edges_df.astype(int).astype("str")
         
         # Merging the 2 dataframes.
-        self.tracks = tracks_df.join(edges_df)
+        self.tracks = pd.concat([tracks_df, edges_df], axis = 1)
         
         # Computing the links between spots.
         self.computeSpotsLinks()
@@ -1090,23 +1088,24 @@ class OAT():
                 nextSpotID = self.spotsLinks[trackID][spot+1]
                 
                 # Retrieving the spot and target spot coordinates
-                spotInfo = self.track.loc[spotID, ["X", "Y", "Z"]]
-                nextSpotInfo = self.track.loc[nextSpotID, ["X", "Y", "Z"]]
+                spotInfo = self.tracks.loc[spotID, ["X", "Y", "Z"]]
+                nextSpotInfo = self.tracks.loc[nextSpotID, ["X", "Y", "Z"]]
                 
                 # Adding the computed vectors to the vectos dataframe.
-                vectors[spotID] = OAT.computeVectors(spotInfo, 
+                vectors.loc[spotID] = OAT.computeVectors(spotInfo, 
                                                      nextSpotInfo,
                                                      toList = True)
                 
             # Adding a null vector as the last spot don't have any vector.
-            vectors[self.spotsLinks[trackID][-1]] = 3*[np.nan]
+            vectors.loc[self.spotsLinks[trackID][-1]] = 3*[np.nan]
             
         # Merging the vectors dataframe to self.tracks. 
         self.tracks = pd.concat([self.tracks, vectors], axis = 1) 
         
-    def showVectors(self, TP, angles = None, label = "3D",
+    def showVectors(self, TP, angles = None, label = "3D", lim = None,
                     translation = False, show = True, 
-                    save = False):
+                    save = False, cellVoxels = False, outerThres = 0.9,
+                    vectorColor = "green"):
         """
         Create a figure with a representation of the vector field. The figure 
         is then saved.
@@ -1116,329 +1115,549 @@ class OAT():
         TP : float
             Time point.
         angles : tuple, optional
-            Viewing angle as follow (lat,long). The default is np.nan as for 
-            default.
+            Viewing angle as follow (lat,long). The default is None.
         label : str, optional
             Name of the representation. The default is "3D".
         lim : list, optional
             Limits for the axis. Format is as follow : 
                 [[xmin, xmax], [ymin, ymax], [zmin, zmax]] 
-            The default is np.nan.
+            The default is None.
         translation : bool, optional
-            Use the translated points (self.translationCoord must
-            have been used to generate them)
-    
-        Returns
-        -------
-        Save the vector field as a picture in the "Vector field" folder.
+            Use the translated points rather than the normal ones. Translated
+            points are get by centering the centroid of the organoid.
+        show : bool, optional
+            If True, show the figure. Default is True.
+        save : bool, optional
+            If True, save the figures in \\output\\figs\\vectors.
+        cellVoxels : bool, optional
+            Computationally heavy, use with caution !
+            If True, show the cells as voxels. Voxels are obtained using the
+            getCellVoxels().
+        outerThres : float, optional
+            Threshold determining that a pixels is inside the voxel and need to
+            be set to 0. Used to improve plotting speed. The default is 0.9.
+        vectorColor : str, optional
+            Set the color of the vectors.
     
         """
-        #Subsampling the dataframe with the spots of the given timepoint.
-        subdf = self.tracks[self.tracks["EDGE_TIME"] == TP]
-        #Initializing the figure and its unique axes.
+        # Subsampling the dataframe with the spots of the given time point.
+        subdf = self.tracks[self.tracks["TP"] == TP]
+        
+        # Initializing the figure and its unique axes.
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-        #Plotting the vector field. Syntax : ax.quiver(x, y, z, u, v, w)
+        
+        # Selecting the columns based on user choice and plotting the 
+        # vector field.
         if not translation:
             ax.quiver(subdf["X"], subdf["Y"], subdf["Z"], 
-                      subdf["uX"], subdf["vY"], subdf["wZ"])
-            if "RA_uX" in self.data.columns:
-                RA = self.data.loc[TP-0.5]
-                ax.quiver(RA["cX"], RA["cY"], RA["cZ"], 
+                      subdf["uX"], subdf["vY"], subdf["wZ"],
+                      color = vectorColor)
+            
+            # Showing the rotation axis if available.
+            if hasattr(self, "data") and "RA_uX" in self.data.columns:
+                RA = self.data.loc[TP]
+                ax.quiver(RA["cent_X"], RA["cent_Y"], RA["cent_Z"], 
                           RA["RA_uX"], RA["RA_vY"], RA["RA_wZ"],
                           color = "red", length = 5, pivot = "middle")
+                
+        # Showing translated vectors if so desired.
         else :
+            
+            # Computing them if not already done.
+            if "tX" not in subdf.columns :
+                self.translationCoord()
+                
             ax.quiver(subdf["tX"], subdf["tY"], subdf["tZ"], 
                       subdf["uX"], subdf["vY"], subdf["wZ"])
-        #Labeling axis
+            
+        # Showing cell voxels if so desired.
+        if cellVoxels and label == "3D":
+            
+            # Computing them if not already done.
+            if not hasattr(self, "cellArray") or\
+                TP not in self.cellArray.index :
+                self.computeCellVoxels(TP, outerThres)
+                
+            ax.voxels(self.cellArray[TP], shade = True)
+            
+        # Labeling axis
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         ax.set_zlabel("Z")
-        #Giving a title to the figure (see further if an angle is provided)
+        
+        # Giving a title to the figure (renamed further if an angle is 
+        # provided)
         ax.set_title("Time point : "+str(TP))
-        #Setting limits to axis if limits are given
-        if label == "X":
-            ymax, ymin = subdf["Y"].max(), subdf["Y"].min()
-            ax.set_ylim3d([ymax-(ymax-ymin)/2, ymax+10])
-            ax.set_yticks([])
-            #print([ymax-(ymax-ymin)/2, ymax+10])
-        elif label == "Y":
-            xmax, xmin = subdf["X"].max(), subdf["X"].min()
-            ax.set_xlim3d([xmax-(xmax-xmin)/2, xmax+10])
-            ax.set_xticks([])
-            #print([xmax-(xmax-xmin)/2, xmax+10])
-        elif label == "Z":
-            zmax, zmin = subdf["Z"].max(), subdf["Z"].min()
-            ax.set_zlim3d([zmax-(zmax-zmin)/2, zmax+10])
-            ax.set_zticks([])
-            #print([zmax-(zmax-zmin)/2, zmax+10])
-        #Setting the viewing angle if provided and renaming the figure to
-        #include the angle information
+        
+        # Setting limits to axis.
+        # If nothing has been provided : limit are set only for special views.
+        # -> The first front half is shown when "2D" angling.
+        if lim == None :
+            if angles == (0, 90):
+                ymax, ymin = subdf["Y"].max(), subdf["Y"].min()
+                ax.set_ylim3d([ymax-(ymax-ymin)/2, ymax+10])
+                ax.set_yticks([])
+    
+            elif angles == (0, 0):
+                xmax, xmin = subdf["X"].max(), subdf["X"].min()
+                ax.set_xlim3d([xmax-(xmax-xmin)/2, xmax+10])
+                ax.set_xticks([])
+    
+            elif angles == (90, 0):
+                zmax, zmin = subdf["Z"].max(), subdf["Z"].min()
+                ax.set_zlim3d([zmax-(zmax-zmin)/2, zmax+10])
+                ax.set_zticks([])
+                
+        # If limits are provided.        
+        else :
+            ax.set_xlim3d(lim[0])
+            ax.set_ylim3d(lim[1])
+            ax.set_zlim3d(lim[2])
+            
+        # Setting the viewing angle if provided and renaming the figure to
+        # include the angle information
         if type(angles) == tuple:
             ax.view_init(angles[0],angles[1])
             ax.set_title("Timepoint : "+str(TP)+', Angle : ('+str(angles[0])+\
                          ","+str(angles[1])+")")
-        #Saving the figure as an image. Name template is as follow :
-        #{name of the file (argument given in _init_)}_vf_({TP})_{label}.png
+                
         if show :
             plt.show()
+            
+        # Saving the figure as an image. Name template is as follow :
+        # {name of the file (argument given in _init_)}_vf_({TP})_{label}.png
         if save :
-            plt.savefig(self.dir["root"]+"\\output\\figs\\"+self.sample+\
+            plt.savefig(self.dir["vectorsFigs"]+"\\"+self.sample+\
                         "_vf_("+str(TP)+")_"+label+".png", dpi=400)
+                
         plt.close(fig)
         
-    def animVectors(self, translation = False):
+    def animVectors(self, fps = 1, lim = None, translation = False, 
+                    cellVoxels = False, outerThres = 0.9, 
+                    vectorColor = "green"):
         """
-        Method to generate a film showing the displacement vector field at 
-        every timepoint available.  
-    
+        Generate a film showing the displacement vector field at 
+        every time point available.  
+
+        Parameters
+        ----------
+        lim : list, optional
+            Limits for the axis. Format is as follow : 
+                [[xmin, xmax], [ymin, ymax], [zmin, zmax]] 
+            The default is None.
+        fps : int, optional
+            Frames per second for the video. The default is 1.
+        translation : bool, optional
+            Use the translated points rather than the normal ones. Translated
+            points are get by centering the centroid of the organoid.
+        cellVoxels : bool, optional
+            Computationally heavy, use with caution !
+            If True, show the cells as voxels. Voxels are obtained using the
+            getCellVoxels().
+        outerThres : float, optional
+            Threshold determining that a pixels is inside the voxel and need to
+            be set to 0. Used to improve plotting speed. The default is 0.9.    
+        vetorColor : str, optional
+            Set the color of the vectors.
+
         Returns
         -------
-        Save the film in the "Vector field" folder as a .avi file.
-    
+        Save the video in \\output\\animation.
+
         """
-        #Retrieving available timepoints and keeping those who have more than 
-        #10 spots. That way we remove incorrect vectors. 
-        TP_list = [k for k in self.tracks["EDGE_TIME"].value_counts().index 
-                    if self.tracks["EDGE_TIME"].value_counts()[k] >= 10]
-        #Sorting the list.
-        TP_list.sort()
-        #Setting the different views we want in our representation along with 
-        #limits for each one of them.
+        # Setting the different viewing angles and their label.
         angles = [None, (0, 90), (0, 0), (90, 0)]
         labels = ["3D","X","Y","Z"]
-        #img_array will save the various images opened with opencv.
-        img_array = []
-        #Browsing the angle of each representation and making 1 figure for each
-        #timepoint.
+        
+        # arrays will save the various images opened with opencv.
+        arrays = []
+        
+        # Iterating over all angles.
         for idx in range(len(angles)) :
-            for TP in TP_list:
-                #Creating a figure and saving it as an image with the 
-                #showVectors method.
+            
+            # Iterating over all time points.
+            for TP in self.files["TP"]:
+                
+                # Creating a figure and saving it as an image.
                 self.showVectors(TP, angles[idx], labels[idx],
                                  translation = translation,
-                                 show = False, save = True)
-                #opening the image that have just been created.
-                img = cv2.imread(
-                    self.dir["root"]+"\\output\\figs\\"+self.sample+\
-                    "_vf_("+str(TP)+")_"+labels[idx]+".png")
-                #Retrieving the image size to set the vido size.
+                                 show = False, save = True, 
+                                 cellVoxels = cellVoxels, 
+                                 outerThres = outerThres,
+                                 vectorColor = vectorColor)
+                
+                # Opening the image that have just been created.
+                img = cv2.imread(self.dir["vectorsFigs"]+"\\"+self.sample+\
+                                 "_vf_("+str(TP)+")_"+labels[idx]+".png")
+                    
+                # Retrieving the image size to set the video shapes.
                 height, width, layers = img.shape
                 size = (width,height)
-                #Adding the opencv object containing the image in the
-                #img_array.
-                img_array.append(img)
-        #Creating and opening the videofile container using opencv. 
+                
+                # Adding the opencv object containing the image in the
+                # img_array.
+                arrays.append(img)       
+        
+        # Creating and opening the videofile container using opencv. 
         out = cv2.VideoWriter(self.dir["anim"]+"\\"+self.sample+"_vf.avi", 0,  
-                               cv2.VideoWriter_fourcc(*'DIVX'), fps = 1, 
+                               cv2.VideoWriter_fourcc(*'DIVX'), fps = fps, 
                                frameSize = size)
-        #Loading every images present in img_array into the video container.
-        for i in range(len(img_array)):
-            out.write(img_array[i])
-        #Releasing and effectively saving the videofile
+        
+        # Loading every images present in arrays into the video container.
+        for img in arrays:
+            out.write(img)
+            
+        # Closing the video.
         out.release()
         
-    def exportVectorsVTK(self, tp = "all", tracks = "all"):
-        #Retrieving available timepoints and keeping those who have more than 
-        #10 spots. That way we remove incorrect vectors.
+    def exportVectorsVTK(self, TP = "all", tracks = "all"):
+        """
+        Export the displacement vectors coordinates in a polydata .vtk format.
+
+        Parameters
+        ----------
+        TP : int or list, optional
+            Singe (int) or multiple (list) time points. The default is "all".
+        tracks : int, optional
+            Track ID. The default is "all".
+
+        Returns
+        -------
+        Save the .vtk in \\output\\vtk_export
+
+        """
         
         # Creating the list of time points to show by the user choice.
-        if tp == "all":
-            TP_list = [k for k in self.tracks["EDGE_TIME"].value_counts().index 
-                        if self.tracks["EDGE_TIME"].value_counts()[k] >= 10]
-        elif type(tp) == list:
-            TP_list = tp
-        elif type(tp) == int:
-            TP_list = [tp]
+        if TP == "all":
+            TP = self.files["TP"]
+        elif type(TP) == int:
+            TP = [TP]
         
         # Creating the list of tracks that will be exported.
         if tracks == "all":
-            tracks_list = [k for k in 
-                           self.tracks["TRACK_ID"].value_counts().index]
-        elif type(tracks) == list:
-            tracks_list = tracks
+            tracks = [k for k in self.tracks["TRACK_ID"].value_counts().index]
         elif type(tracks) == int:
-            tracks_list = [tracks]
+            tracks = [tracks]
         
         # Sorting the list of time point because we want to increment following
         # the chronological order. 
-        TP_list.sort()
-        tracks_list.sort()
+        tracks.sort()
         
-        #Saving points coordinates in 3 dataframes, one for each axis. Rows are
-        #timepoints and columns are tracks.
+        # Saving points coordinates in 3 dataframes, one for each axis. 
+        # Rows are timepoints and columns are tracks.
         list_X, list_Y, list_Z = [], [], []
-        #Filling previous lists with sublists. Each sublist has the 
-        #corresponding axis coordinates of all points for 1 timepoint. It's 
-        #like an image of the cells on the X axis at a certain timepoint.
-        for tp in TP_list :
-            #Subsampling tracking_df with the values for a given timepoints
-            subdf = self.tracks[self.tracks["EDGE_TIME"] == tp]
+        
+        # Filling previous lists with sublists. Each sublist has the 
+        # corresponding axis coordinates of all points for 1 time point. It's 
+        # like an image of the cells on the X axis at a certain time point.
+        for tp in TP :
+            
+            # Working with the subDataframe corresponding to the time point.
+            subdf = self.tracks[self.tracks["TP"] == tp]
             list_X.append([])
             list_Y.append([])
             list_Z.append([])
-            for track in tracks_list :
-                #Retrieving the point data  
-                _point_data = subdf.loc[subdf["TRACK_ID"] == track]
-                #Checking if the point exist. If it doesn't then we enter no 
-                #data (represented by a NaN value.) We will deal with these 
-                #holes later
-                if _point_data.empty :
+            
+            # Adding coordinates values for each track
+            for track in tracks :
+                # Retrieving the point data  
+                pointData = subdf[subdf["TRACK_ID"] == track]
+                # Checking if the point exist. If it doesn't then we enter no 
+                # data (represented by a NaN value.) We will deal with these 
+                # later on.
+                if pointData.empty :
                     list_X[-1].append(np.nan)
                     list_Y[-1].append(np.nan)
                     list_Z[-1].append(np.nan)
+                    
                 else :
-                    list_X[-1].append(_point_data["X"][0])
-                    list_Y[-1].append(_point_data["Y"][0])
-                    list_Z[-1].append(_point_data["Z"][0])
-        Xpoints = pd.DataFrame(list_X, index = TP_list, 
-                                    columns = tracks_list)
-        Ypoints = pd.DataFrame(list_Y, index = TP_list, 
-                                    columns = tracks_list)
-        Zpoints = pd.DataFrame(list_Z, index = TP_list, 
-                                    columns = tracks_list)
-        #Filling the empty values : if the track start later, we fill previous
-        #positions with the starting one (bfill). We do the same thing the 
-        #other way when it stop sooner (ffill).
+                    list_X[-1].append(pointData["X"][0])
+                    list_Y[-1].append(pointData["Y"][0])
+                    list_Z[-1].append(pointData["Z"][0])
+                    
+        # Creating the Dataframes that will be used by PyVTK. 
+        Xpoints = pd.DataFrame(list_X, index = TP, columns = tracks)
+        Ypoints = pd.DataFrame(list_Y, index = TP, columns = tracks)
+        Zpoints = pd.DataFrame(list_Z, index = TP, columns = tracks)
+        
+        # Filling the empty values : if the track start later, we fill previous
+        # positions with the starting one (bfill). We do the same thing the 
+        # other way when it stop sooner (ffill).
         Xpoints.fillna(method = 'ffill', inplace = True)
         Ypoints.fillna(method = 'ffill', inplace = True)
         Zpoints.fillna(method = 'ffill', inplace = True)
         Xpoints.fillna(method = 'bfill', inplace = True)
         Ypoints.fillna(method = 'bfill', inplace = True)
         Zpoints.fillna(method = 'bfill', inplace = True)
-        PyVTK(self.sample+"_tracks", Xpoints, Ypoints, Zpoints, 
-                    self.dir["vtk"], "polydata")
         
-    def convexHull(self):
+        # Running PyVTK
+        PyVTK(self.sample+"_tracks", Xpoints, Ypoints, Zpoints, 
+              self.dir["vtk"], "polydata")
+        
+    def computeCellVoxels(self, TP = "all", offset = 10, outerThres = 0.9):
+        """
+        Compute voxels of cells. For each time point, the corresponding image
+        is loaded as an array. We get a threshold by getting the minimal pixel
+        value for the pixels that are at spots coordinates, for a given 
+        time point. 
+
+        Parameters
+        ----------
+        TP : int or list, optional
+            Time points to compute. The default is "all".
+        offset : int, optional
+            Added value to the min and max to make sure everything is inside. 
+            The default is 10.
+        outerThres : float, optional
+            Threshold determining that a pixels is inside the voxel and need to
+            be set to 0. Used to improve plotting speed. The default is 0.9.
+
+        """
+        # Selecting the timepoint based on the user choice
+        if TP == "all":
+            TP = self.files["TP"]
+        elif type(TP) == int:
+            TP = [TP]
+        
+        # Creating a pd.Series in which we will save the arrays if not already.
+        if not hasattr(self, "cellArray"):
+            self.cellArray = pd.Series(dtype = "object")
+        
+        # Iterating over all desired time points.
+        for tp in TP:
+            filename = self.files[self.files["TP"] == tp]["tifs"].values[0]
+            
+            # Opening the image.
+            image = io.imread(self.dir["tifs"]+"\\"+filename)
+            
+            # Converting into a Numpy array. The shape is in this order : Z, Y, X.
+            imarray = np.array(image)
+            
+            # Getting the minimal value of pixels at spots coordinates.
+            subdf = self.tracks[self.tracks["TP"] == tp][["X", "Y", "Z"]]
+            subdf = subdf.astype("int")
+            values = imarray[subdf["Z"], subdf["Y"], subdf["X"]].tolist()
+            minimal = min(values)
+            
+            # Setting the outside as 0 and the inside as 1.
+            imarray[imarray < (minimal-offset)] = 0
+            imarray[imarray >= (minimal-offset)] = 1
+            
+            # Transposing the array that way it is oriented the same as the 
+            # other objects (spots, vectors).
+            imarray = np.transpose(imarray, (2, 1, 0))
+            
+            # Setting the inner pixels to 0 as well to only get the outer 
+            # shell.
+            toChange = []
+            for x in range(1, imarray.shape[0]-1):
+                for y in range(1, imarray.shape[1]-1):
+                    for z in range(1, imarray.shape[2]-1):
+                        
+                        # Getting the 3*3 square array centered on (x,y,z). 
+                        neighbors = imarray[x-1:x+2, y-1:y+2, z-1:z+2]
+                        
+                        # Summing the values and if the number of ones is 
+                        # greater than the threshold, saving the pixel coord.
+                        if neighbors.sum()/27 >= outerThres :
+                            toChange.append([x, y, z])
+            
+            # Setting the values of the selected pixels to 0.
+            for coord in toChange:
+                imarray[coord[0], coord[1], coord[2]] = 0
+            
+            # Saving the array with its time point index.
+            self.cellArray.loc[tp] = imarray           
+            
+    def computeConvexHull(self):
+        """
+        Use the Convex Hull algorithm of scipy to get the cells that are 
+        forming the outershell as well as the volume of the organoid. 
+
+        """
+        # Creating 2 buffer lists.
         volume, spots = [], []
+        
+        # Iterating over files.
         for file in self.files.index:
+            
+            # Getting the sub dataframe.
             subdf = self.tracks[self.tracks["FILE"] == file]
+            
+            # Using the Convex Hull algorithm.
             hull = ConvexHull(subdf.loc[:,["X", "Y", "Z"]])
+            
+            # Saving the volume and the spots that are the outershell.
             volume.append(hull.volume) 
             spots += list(subdf.iloc[hull.vertices.tolist()].index)
+            
+        # Setting the bool value for the question : is this spot part of the 
+        # outershell ?
         isHull = pd.Series(name = "isHull", dtype="bool")
         for idx in self.tracks.index :
             if idx in spots:
                 isHull[idx] = True
             else :
                 isHull[idx] = False
+                
+        # Merging the bool isHull to self.tracks.
         self.tracks = pd.concat([self.tracks, isHull], axis = 1)
-        volume = pd.Series(volume, index = self.files["time"], 
+        
+        # Converting the volume list to a Series to add time point informations
+        volume = pd.Series(volume, index = self.files["TP"], 
                            name = "volume", dtype = "float")
+        
+        # Creating self.data if not already and adding the volume series as 
+        # well as the mean radius of the organoid.
         if not hasattr(self, "data"):
-            self.data = pd.DataFrame(index=self.files["time"])
+            self.data = pd.DataFrame(index = self.files["TP"])
         self.data = pd.concat([self.data, volume], axis = 1)
         self.data["radius"] = [(3*V/(4*np.pi))**(1/3) 
-                               for V in self.data["volume"]]      
+                               for V in self.data["volume"]]
         
-    def translationCoord(self):
-        center = [self.VolShape[-axis]/2 
-                  for axis in range(len(self.VolShape))]
-        coords = pd.DataFrame(columns = ["tX", "tY", "tZ"], dtype = "float")
-        for file in self.files.index:
-            subdf = self.tracks[self.tracks["FILE"] == file]
-            centroid = OAT.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
-            temp_df = pd.DataFrame([center, centroid], 
-                                   columns = ["X", "Y", "Z"])
-            translation = OAT.computeVectors(temp_df)
-            new_coords = []
-            for spot in subdf.index:
-                new_coords.append([subdf.loc[spot, "X"]+translation["X"],
-                                  subdf.loc[spot, "Y"]+translation["Y"],
-                                  subdf.loc[spot, "Z"]+translation["Z"]])
-            coords = pd.concat([coords, 
-                                pd.DataFrame(new_coords, index = subdf.index, 
-                                             columns = ["tX", "tY", "tZ"], 
-                                             dtype = "float")])
-        self.tracks = pd.concat([self.tracks, coords], axis = 1)        
-        
-    def getDrift(self):
-        centroids = pd.DataFrame(dtype = "float", columns = ["X", "Y", "Z"])
-        drift = pd.DataFrame(dtype = "float", columns = ["distance"])
+    def computeDrift(self):
+        """
+        Compute the drift of the organoid between time points.
+
+        """
+        # Creating DataFrames to hold computation results. 
+        centroids = pd.DataFrame(dtype = "float", 
+                                 columns = ["cent_X", "cent_Y", "cent_Z"])
+        drift = pd.DataFrame(dtype = "float", columns = ["drift_distance"])
         vectors = pd.DataFrame(dtype = "float", 
-                               columns = ["c_uX", "c_vY", "c_wZ"])
-        for ID in range(len(self.files.index)):
-            subdf = self.tracks[self.tracks["FILE"] == self.files.index[ID]]
-            index = self.files.iloc[ID]["time"]
-            centroids.loc[index] = OAT.getCentroid(
-                subdf.loc[:,["X", "Y", "Z"]])
-            if ID >= 1 :
-                vectors.loc[index-1] = list(
-                    OAT.computeVectors(centroids.iloc[ID-1:ID+1]))
-                drift.loc[index] = OAT.euclidDist(centroids.iloc[ID], 
-                                                       centroids.iloc[ID-1])
+                               columns = ["drift_uX", "drift_vY", "drift_wZ"])
+        
+        # Iterating over files index.
+        for tp in range(len(self.files["TP"])):
+            
+            # Extracting the subdataframe containing the information for a 
+            # given file.
+            subdf = self.tracks[self.tracks["TP"] == tp]
+            
+            # Getting the centroid for this tp.
+            centroids.loc[tp] = OAT.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
+            
+            # If we're not at the first file, we can compute the drift vector 
+            # between the centroids from the n-1 and n time point.
+            # The drift vector is saved with the n-1 time point index. 
+            if tp >= 1 :
+                vectors.loc[tp-1] = OAT.computeVectors(centroids.iloc[tp-1],
+                                                       centroids.iloc[tp],
+                                                       toList = True)
+                drift.loc[tp] = OAT.euclidDist(centroids.iloc[tp], 
+                                                       centroids.iloc[tp-1])
+        # Creating the self.data if not already.        
         if not hasattr(self, "data"):
-            self.data = pd.DataFrame(index=self.files["time"])
-        centroids.columns = ["cX", "cY", "cZ"]
+            self.data = pd.DataFrame(index = self.files["TP"])
+            
+        # Merging the several dataframes to self.data.
         self.data = pd.concat([self.data, centroids], axis = 1)
         self.data = pd.concat([self.data, vectors], axis = 1)
         self.data = pd.concat([self.data, drift], axis = 1)
         
+    def translateCoord(self, center = None):
+        """
+        Translate the coordinates of all points within self.tracks to get the
+        centroid of the organoid at the desired coordinates.
+        The translated coordinates are added to self.tracks.
+
+        """
+        # Setting the center coordinates if no user choice.
+        if center == None:
+            center = pd.Series([self.VolShape[-axis]/2 
+                                for axis in range(len(self.VolShape))],
+                               index = ["X", "Y", "Z"])
+        
+        # Creating a DataFrame to store the translated coordinates.
+        coords = pd.DataFrame(columns = ["trans_X", "trans_Y", "trans_Z"], 
+                              dtype = "float")
+        
+        # Iterating over files.
+        for file in self.files.index:
+            
+            # Getting the wanted rows.
+            subdf = self.tracks[self.tracks["FILE"] == file]
+            
+            # Computing the centroid as well as the translation between the 
+            # centroid and the center coordinates.
+            centroid = OAT.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
+            translation = OAT.computeVectors(center, centroid)
+            
+            # Creating a buffer list to store new coordinates.
+            new_coords = []
+            
+            # Iterating over spot IDs and computing the translated coordinates.
+            for spot in subdf.index:
+                new_coords.append([subdf.loc[spot, "X"]+translation["X"],
+                                  subdf.loc[spot, "Y"]+translation["Y"],
+                                  subdf.loc[spot, "Z"]+translation["Z"]])
+            
+            # Adding the translated coordinates to the DataFrame.
+            coords = pd.concat([coords, 
+                                pd.DataFrame(new_coords, index = subdf.index, 
+                                             columns = ["trans_X", "trans_Y", 
+                                                        "trans_Z"], 
+                                             dtype = "float")])
+            
+        # Merging self.tracks and the Dataframe containing the translated 
+        # coords.
+        self.tracks = pd.concat([self.tracks, coords], axis = 1)        
+           
     def crossProduct(df):
-        # Return the cross product of the 2 vectors.
+        """
+        Compute the cross product of 2 vectors.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Each row is a vector and columns are ["uX", "vY", "wZ"].
+
+        Returns
+        -------
+        pd.Series
+            Series where index are ["uX", "vY", "wZ"].
+
+        """
+        # Retrieve the vectors as Series from the DataFrame.
         A, B = df.iloc[0], df.iloc[1]
-        return pd.Series([(A["vY"]*B["wZ"]-A["wZ"]-B["vY"]),
+        
+        return pd.Series([(A["vY"]*B["wZ"]-A["wZ"]*B["vY"]),
                           -(A["uX"]*B["wZ"]-A["wZ"]*B["uX"]),
                           (A["uX"]*B["vY"]-A["vY"]*B["uX"])],
                          index = ["uX", "vY", "wZ"], dtype = "float")
-        
-    def computeRotationAxis(self, drift = True):
-        #Compute the rotation axis for each frame or time point
-        rotationAxisVectors = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
-                                           dtype = "float")
-        CP = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
-                                    dtype = "float")
-        time = []
-        for file in self.files.index:
-            subdf = self.tracks[self.tracks["FILE"] == file]
-            res = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
+    
+    def computeRotationAxis(self):
+        componentVectors = pd.DataFrame(columns = ["V1_uX", "V1_vY", "V1_wZ",
+                                                   "V2_uX", "V2_vY", "V2_wZ",
+                                                   "RA_uX", "RA_vY", "RA_wZ"], 
                                         dtype = "float")
-            time += 1000*[self.files.loc[file, 'time']]
-            for iteration in range(1000):
-                sample = subdf.sample(2)
-                sample = sample.loc[:,["uX", "vY", "wZ"]]
-                res.loc[iteration] = OAT.crossProduct(sample)
-            CP = pd.concat([CP, res], axis = 0, ignore_index = True)
-            res.dropna(inplace=True)
-            rotationAxisVectors.loc[
-                self.files.loc[file, "time"]] = res[["uX", "vY", "wZ"]].mean()
-        CP["time"] = time
-        CP.dropna(inplace=True)
-        dX, dY, dZ = [], [], []
-        for tp in self.files["time"] :
-            subdf = CP[CP["time"] == tp]
-            dX += list(self.data.loc[tp ,"cX"]+subdf["uX"])
-            dY += list(self.data.loc[tp, "cY"]+subdf["vY"])
-            dZ += list(self.data.loc[tp, "cZ"]+subdf["wZ"])
-        CP["DX"] = dX
-        CP["DY"] = dY
-        CP["DZ"] = dZ    
-        self.CrossProducts = CP
-        if drift and "c_uX" in self.data.columns: 
-            for tp in self.data.index:
-                rotationAxisVectors["uX"] = (
-                    rotationAxisVectors["uX"]-self.data["c_uX"])
-                rotationAxisVectors["vY"] = (
-                    rotationAxisVectors["vY"]-self.data["c_vY"])
-                rotationAxisVectors["wZ"] = (
-                    rotationAxisVectors["wZ"]-self.data["c_wZ"])
-        if not hasattr(self, "data"):
-            self.data = pd.DataFrame(index=self.files["time"])
-        rotationAxisVectors.columns = ["RA_uX", "RA_vY", "RA_wZ"]
-        self.data = pd.concat([self.data, rotationAxisVectors], axis = 1)               
         
-    def countCells(self):
-        NumberOfCells = []
-        for file in self.files.index:
-            NumberOfCells.append(
-                len(self.tracks[self.tracks["FILE"] == file].index))
-        if not hasattr(self, "data"):
-            self.data = pd.DataFrame(index=self.files["time"])
-        self.data["NumberOfCells"] = NumberOfCells
+        for tp in self.files["TP"]:
+            subdf = self.tracks[self.tracks["TP"] == tp]
+            
+            if not subdf.dropna().empty:   
+            
+                pca = PCA(n_components = 2)
+                pca.fit(subdf.loc[:, ["uX", "vY", "wZ"]])
+                
+                V1 = pca.components_[0]
+                V2 = pca.components_[1]
+                
+                tempDF = pd.DataFrame(pca.components_, 
+                                      columns = ["uX", "vY", "wZ"])
+                
+                RA = list(OAT.crossProduct(tempDF))
+                
+                componentVectors.loc[tp] = [V1[0], V1[1], V1[2], 
+                                            V2[0], V2[1], V2[2],
+                                            RA[0], RA[1], RA[2]]
+            
+        self.data = pd.concat([self.data, componentVectors], axis = 1)
         
     def computeStats(self):
-        self.convexHull()
-        self.getDrift()
+        self.computeConvexHull()
+        self.computeDrift()
         self.summary = pd.Series(name = "Summary", dtype = "float")
         self.summary["Total_Distance"] = self.data["distance"].sum()
         print("The Organoid travelled ", self.summary["Total_Distance"], 
@@ -1449,33 +1668,6 @@ class OAT():
         print("This roughly correspond to ", self.summary["distance/radius"], 
               " of the radius of the organoid.")
         self.computeRotationAxis()
-        
-    def plot_figs(fig_num):
-        fig = plt.figure(fig_num, figsize=(4, 3))
-        plt.clf()
-        ax = fig.add_subplot(111, projection="3d")
-        X = T.CrossProducts[T.CrossProducts["time"] == 0][["DX","DY","DZ"]]
-        #ax.scatter(X["DX"], X["DY"], X["DZ"], alpha=0.1)
-    
-        # Using SciPy's SVD, this would be:
-        # _, pca_score, Vt = scipy.linalg.svd(Y, full_matrices=False)
-    
-        pca = PCA(n_components=3)
-        pca.fit(X)
-        V = pca.components_.T
-    
-        x_pca_axis, y_pca_axis, z_pca_axis = 3 * V
-        x_pca_plane = np.r_[x_pca_axis[:2], -x_pca_axis[1::-1]]
-        y_pca_plane = np.r_[y_pca_axis[:2], -y_pca_axis[1::-1]]
-        z_pca_plane = np.r_[z_pca_axis[:2], -z_pca_axis[1::-1]]
-        x_pca_plane.shape = (2, 2)
-        y_pca_plane.shape = (2, 2)
-        z_pca_plane.shape = (2, 2)
-        ax.plot_surface(x_pca_plane, y_pca_plane, z_pca_plane)
-        ax.w_xaxis.set_ticklabels([])
-        ax.w_yaxis.set_ticklabels([])
-        ax.w_zaxis.set_ticklabels([])
-        plt.show
             
     def showData(self):
         features = self.data.columns
@@ -1504,13 +1696,18 @@ class OAT():
             plt.close()
                   
 if __name__ == "__main__":
-    T = OAT(fiji_dir = r"C:\Apps\Fiji.app", wrk_dir = r"D:\Wrk\Datasets\1")
+    T = OAT(fiji_dir = r"C:\Apps\Fiji.app", wrk_dir = r"D:\Wrk\Datasets\3")
     T.loadTif()
     #T.getROI()
     T.getVectors(filtering = False)
     # T.computeStats()
     # T.showData()
     # T.animVectors()
+    S = OAT(fiji_dir = r"C:\Apps\Fiji.app", 
+            wrk_dir = r"D:\Wrk\Datasets\Synthetic 1")
+    S.loadTif()
+    #T.getROI()
+    S.getVectors(filtering = False)
 
             
 ### NO USE AT THE MOMENT ------------------------------------------------------
