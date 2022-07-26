@@ -4,7 +4,7 @@ organoid_tracking_tools (OAT) is a set of methods that integrates FIJI's
 Trackmate csv files output to process cell displacement within an organoid.
 
 @author: Alex-932
-@version: 0.6.1
+@version: 0.6.2
 """
 
 import os
@@ -1096,6 +1096,8 @@ class OAT():
         edges_df = edges_df.astype("float")
         
         # Setting the correct names for the files
+        if not hasattr(self, "files") or "tifs" not in self.files.columns:
+            self.loadTif()
         tracks_df.rename(columns = {"FRAME": "FILE"}, inplace = True)
         tracks_df["FILE"] = [self.files.iloc[int(k)].name \
                              for k in tracks_df["FILE"]]
@@ -1215,14 +1217,15 @@ class OAT():
                     nextSpotInfo = self.tracks.loc[nextSpotID, ["Aligned_X", 
                                                                 "Aligned_Y", 
                                                                 "Aligned_Z"]]
+                    
                 else :
                     spotInfo = self.tracks.loc[spotID, ["X", "Y", "Z"]]
                     nextSpotInfo = self.tracks.loc[nextSpotID, ["X", "Y", "Z"]]
-                
+
                 # Adding the computed vectors to the vectos dataframe.
                 vectors.loc[spotID] = OAT.computeVectors(spotInfo, 
-                                                     nextSpotInfo,
-                                                     toList = True)
+                                                         nextSpotInfo,
+                                                         toList = True)
                 
             # Adding a null vector as the last spot don't have any vector.
             vectors.loc[self.spotsLinks[trackID][-1]] = 3*[np.nan]
@@ -1276,10 +1279,10 @@ class OAT():
         subdf = self.tracks[self.tracks["TP"] == TP].copy()
         
         if df == "default" :
-            if np.isin(["RA_uX", "Cent_X"], self.data.columns).all() and \
-                rotAxis : 
+            if np.isin(["RA_uX", "Cent_X"], self.data.columns).all()\
+                and rotAxis : 
                 RA = self.data.loc[TP].copy()
-                RA.loc[["Cent_X", "Cent_X", "Cent_X"]] = [0, 0, 0]
+                RA.loc[["Cent_X", "Cent_Y", "Cent_Z"]] = [0, 0, 0]
         
         # Using translated coordinates if desired and available.
         if df == "translated" and "Trans_X" in subdf.columns :
@@ -1292,7 +1295,7 @@ class OAT():
             # Preparing rotation axis data if available and wanted.
             if "RA_uX" in self.data.columns and rotAxis : 
                 RA = self.data.loc[TP].copy()
-                RA.loc[["Cent_X", "Cent_X", "Cent_X"]] = [0, 0, 0]
+                RA.loc[["Cent_X", "Cent_Y", "Cent_Z"]] = [0, 0, 0]
                 
         # Using aligned coordinates if desired and available.    
         if df == "aligned" and "Aligned_X" in subdf.columns :
@@ -1304,11 +1307,11 @@ class OAT():
             
             if "Aligned_RA_uX" in self.data.columns and rotAxis :
                 RA = self.data.loc[TP].copy()
-                RA.loc[["Cent_X", "Cent_X", "Cent_X"]] = [0, 0, 0]
-                RA = RA.drop(columns = ["RA_uX", "RA_vY", "RA_wZ"])
+                RA.loc[["Cent_X", "Cent_Y", "Cent_Z"]] = [0, 0, 0]
+                RA = RA.drop(index = ["RA_uX", "RA_vY", "RA_wZ"])
                 RA.rename(index = {"Aligned_RA_uX": "RA_uX",
-                                     "Aligned_RA_vY": "RA_vY",
-                                     "Aligned_RA_wZ": "RA_wZ"},
+                                   "Aligned_RA_vY": "RA_vY",
+                                   "Aligned_RA_wZ": "RA_wZ"},
                           inplace = True)
            
         # Plotting the vector field according to the user choice.
@@ -1317,8 +1320,9 @@ class OAT():
                   color = vectorColor)
         
         # Plotting the axis of rotation if desired and available.
-        if rotAxis :
-            ax.quiver(RA["Cent_X"], RA["Cent_X"], RA["Cent_X"], 
+        if rotAxis and "Cent_X" in self.data.columns and \
+            "RA_uX" in self.data.columns:
+            ax.quiver(RA["Cent_X"], RA["Cent_Y"], RA["Cent_Z"], 
                       RA["RA_uX"], RA["RA_vY"], RA["RA_wZ"],
                       color = "red", length = 5, pivot = "middle")
             
@@ -1449,7 +1453,7 @@ class OAT():
         for idx in range(len(angles)) :
             
             # Iterating over all time points.
-            for tp in TP:
+            for tp in TP[:-1]:
                 
                 # Creating a figure and saving it as an image.
                 self.showVectors(TP = tp, df = df, angles = angles[idx],
@@ -1697,7 +1701,7 @@ class OAT():
         """
         # Creating DataFrames to hold computation results. 
         centroids = pd.DataFrame(dtype = "float", 
-                                 columns = ["Cent_X", "Cent_X", "Cent_X"])
+                                 columns = ["Cent_X", "Cent_Y", "Cent_Z"])
         drift = pd.DataFrame(dtype = "float", columns = ["drift_distance"])
         vectors = pd.DataFrame(dtype = "float", 
                                columns = ["drift_uX", "drift_vY", "drift_wZ"])
@@ -1862,9 +1866,7 @@ class OAT():
         if not "RA_uX" in self.data.columns :
             self.computeRotationAxis()
         if not "Trans_X" in self.tracks.columns :
-            center = pd.Series([0, 0, 0], index = ["X", "Y", "Z"], 
-                               dtype = "float")
-            self.translateCoord(center)
+            self.translateCoord()
             
         # Trying to align all rotation axis vectors with Z.
         # First aligning with X to get 0 on the Y axis.
@@ -1883,7 +1885,7 @@ class OAT():
                      data["RA_vY"],
                      data["RA_wZ"]]
             
-            theta_x = np.arctan2(coord[1], coord[2])
+            theta_x = abs(np.arctan2(coord[1], coord[2]))%np.pi
             transAngles.loc[tp, "Theta_X"] = theta_x
             
             # Applying X rotation
@@ -1891,7 +1893,7 @@ class OAT():
             coord[1] = coord[1]*np.cos(theta_x)-coord[2]*np.sin(theta_x)
             coord[2] = ycoord*np.sin(theta_x)+coord[2]*np.cos(theta_x)
             
-            theta_y = np.arctan2(-coord[0], coord[2])
+            theta_y = abs(np.arctan2(-coord[0], coord[2]))%np.pi
             transAngles.loc[tp, "Theta_Y"] = theta_y
             
             # Applying Y rotation
@@ -1910,15 +1912,15 @@ class OAT():
                      newCoords.loc[ID, "Y"],
                      newCoords.loc[ID, "Z"]]
             
-            theta_x = transAngles.loc[self.tracks.loc[ID, "TP"], "Theta_X"]
-            transAngles.loc[tp, "Theta_X"] = theta_x
+            tp = self.tracks.loc[ID, "TP"]
+            
+            theta_x = transAngles.loc[tp, "Theta_X"]
             
             ycoord = coord[1].copy()
             coord[1] = coord[1]*np.cos(theta_x)-coord[2]*np.sin(theta_x)
             coord[2] = ycoord*np.sin(theta_x)+coord[2]*np.cos(theta_x)
             
-            theta_y = transAngles.loc[self.tracks.loc[ID, "TP"], "Theta_Y"]
-            transAngles.loc[tp, "Theta_Y"] = theta_y
+            theta_y = transAngles.loc[tp, "Theta_Y"]
             
             xcoord = coord[0].copy()
             coord[0] = coord[0]*np.cos(theta_y)+coord[2]*np.sin(theta_y)
@@ -1932,6 +1934,8 @@ class OAT():
         self.getVectors(aligned = True)
         
         self.transAngles = transAngles
+        
+        
         
     def computeAngularVelocity(self):
         
@@ -1947,6 +1951,7 @@ class OAT():
                                           list(subdf.loc[ID, ["Aligned_X",
                                                               "Aligned_Y"]])) 
             
+            # Checking if the ID is not a NaN value.
             if type(tID) == str:
                 
                 # Computing delta t.
@@ -1955,15 +1960,11 @@ class OAT():
                 # Computing the angle between the point and the X axis.
                 y, x = subdf.loc[ID, "Aligned_Y"], subdf.loc[ID, "Aligned_X"]
                 theta = np.arctan2(y, x)
-                if y < 0 :
-                    theta += 2*np.pi
                 
                 # Computing the angle between the target point and the X axis.
                 yTarg, xTarg = subdf.loc[tID, "Aligned_Y"], \
                     subdf.loc[tID, "Aligned_X"]
                 targTheta = np.arctan2(yTarg, xTarg)
-                if y < 0 :
-                    targTheta += 2*np.pi
                 
                 dTheta = abs(targTheta-theta)
                 
@@ -2027,6 +2028,7 @@ class OAT():
         
         axs[1].scatter(subdf["Aligned_X"], subdf["Aligned_Y"], 
                        c = subdf["Angular_Velocity"])
+        axs[1].legend()
         axs[1].set_xlabel("X")
         axs[1].set_ylabel("Y")
         axs[1].set_title("Spots on the XY plane.")
@@ -2042,7 +2044,7 @@ if __name__ == "__main__":
     #T.computeStats()
     # T.showData()
     # T.animVectors()
-    S = OAT(wrk_dir = r"D:\Wrk\Datasets\S3")
+    S = OAT(wrk_dir = r"D:\Wrk\Datasets\S5")
     #S.loadTif()
     #T.getROI()
     #S.getVectors(filtering = False)
