@@ -11,7 +11,7 @@ import numpy as np
 
 class tools():
     
-    def EuclidDist(PointA, PointB):
+    def euclid_distance(PointA, PointB):
         """
         Return the euclid distance between PointA and PointB. 
         Works in 3D as well as in 2D. 
@@ -81,7 +81,7 @@ class tools():
             
         return centroid
     
-    def CrossProduct(df):
+    def cross_product(df):
         """
         Compute the cross product of 2 vectors.
 
@@ -104,7 +104,7 @@ class tools():
                           (A["uX"]*B["vY"]-A["vY"]*B["uX"])],
                          index = ["uX", "vY", "wZ"], dtype = "float")
     
-    def Vectors(PtA, PtB, toList = False):
+    def displacement_vector(PtA, PtB, toList = False):
         """
         Return the 2D or 3D displacement vector between 2 points.
         The vector is oriented from PtA to PtB. 

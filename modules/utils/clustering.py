@@ -9,7 +9,7 @@ Clustering methods for OAT.
 import pandas as pd
 import re
 from sklearn.cluster import DBSCAN
-from modules.tools import tools
+from modules.utils.tools import tools
 
 class clustering():
     
@@ -248,11 +248,6 @@ class clustering():
         
         else :
             return Results
-        
-        # # Saving the distance dataframe.
-        # clustDist = pd.concat([clustDist, Results], axis = 1)
-        # self.clustDist = clustDist
-        # # self.clustDist["TP"] = self.clustDist["TP"].astype("int")
         
     def selectROI(subdf, std = 15, eps = 2, min_samples = 3, offset = 5):
         """

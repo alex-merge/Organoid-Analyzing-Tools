@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Preprocessing section analyzing component of OAT.
+Preprocessing part analyzing component of OAT.
 
 @author: Alex-932
 @version: 0.7
@@ -8,7 +8,7 @@ Preprocessing section analyzing component of OAT.
 
 import os
 import pandas as pd
-from modules.utils.fileimport import *
+from modules.utils.filemanager import *
 from modules.utils.clustering import *
 from modules.utils.image import *
 
@@ -131,7 +131,7 @@ class preprocessing():
                
         return ROI
        
-    def createImg(fileDirpath, imgDirpath, savepath,
+    def denoiseTimelapse(fileDirpath, imgDirpath, savepath,
                   std = 15, roi_eps = 2, roi_min_samples = 3, 
                   offset = 5, clust_eps = 40, clust_min_samples = 3, 
                   cIter = 1000, cSample = 10, threshold = 10, 

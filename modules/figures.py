@@ -426,3 +426,103 @@ class figures():
             plt.show()
             
         plt.close()
+        
+    def animVectors(self, TP = "all", fps = 1, lim = None, df = "default", 
+                    rotAxis = True, cellVoxels = False, 
+                    vectorColor = "black"):
+        """
+        Generate a film showing the displacement vector field at 
+        every time point available. 
+        The video is saved in \\output\\animation.
+
+        Parameters
+        ----------
+        TP : list, optional
+            First element is the first time point, the 2nd is the last 
+            time point (included). The default is "all".
+        fps : int, optional
+            Frames per second for the video. The default is 1.
+        lim : list, optional
+            Limits for the axis. Format is as follow : 
+                [[xmin, xmax], [ymin, ymax], [zmin, zmax]] 
+            The default is None.
+        mode : str, optional
+            Select the mode :
+            - default : video will contains vectors, for each time points
+            - translated : vectors are translated to [0, 0, 0].
+            - aligned : use the spots coordinates where the axis of rotation
+                        is aligned to the Z axis.
+        rotAxis : bool, optional
+            If True, show the rotation axis if available. The default is True.
+        cellVoxels : bool, optional
+            Computationally heavy, use with caution !
+            If True, show the cells as voxels. Voxels are obtained using the
+            getCellVoxels(). 
+        vetorColor : str, optional
+            Set the color of the vectors. The default is black.
+
+        """
+        clock = time.time()
+        print("# Creating animation showing vectors over time ...")        
+        
+        # Setting time points according to user inputs.
+        if TP == "all":
+            TP = self.files["TP"][:-1]
+            
+        elif type(TP) == list:
+            # Checking if there are None values and replacing them.
+            if TP[0] == None:
+                TP[0] = self.files["TP"].min()
+                
+            elif TP[1] == None:
+                TP[1] = self.files["TP"].max()
+                
+            # Creating TP to include all time points in the desired range.
+            TP = [tp for tp in range(TP[0], TP[1]) if tp in self.files["TP"]]
+        
+        # arrays will save the various images opened with opencv.
+        arrays = []
+        
+        # Setting angles
+        angles = [None, (0, 90), (0, 0), (90, 0)]
+        labels = ["3D", "X", "Y", "Z"]
+        
+        # Iterating over all angles.
+        for idx in range(len(angles)) :
+            
+            # Iterating over all time points.
+            for tp in TP[:-1]:
+                
+                # Creating a figure and saving it as an image.
+                self.showVectors(TP = tp, df = df, angles = angles[idx],
+                                 lim = lim, label = labels[idx],
+                                 rotAxis = rotAxis,
+                                 show = False, save = True, 
+                                 cellVoxels = cellVoxels, 
+                                 vectorColor = vectorColor)
+                
+                # Opening the image that have just been created.
+                img = cv2.imread(self.dir["vectorsFigs"]+"\\"+self.sample+\
+                                 "_vf_("+str(tp)+")_"+labels[idx]+".png")
+                    
+                # Retrieving the image size to set the video shapes.
+                height, width, layers = img.shape
+                size = (width,height)
+                
+                # Adding the opencv object containing the image in the
+                # img_array.
+                arrays.append(img)       
+        
+        # Creating and opening the videofile container using opencv. 
+        out = cv2.VideoWriter(self.dir["anim"]+"\\"+self.sample+"_"+df+".avi", 
+                              0, cv2.VideoWriter_fourcc(*'DIVX'), fps = fps, 
+                              frameSize = size)
+        
+        # Loading every images present in arrays into the video container.
+        for img in arrays:
+            out.write(img)
+            
+        # Closing the video.
+        out.release()
+        
+        print("   Elapsed time :", time.time()-clock, "s")

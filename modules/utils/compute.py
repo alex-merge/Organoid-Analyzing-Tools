@@ -6,18 +6,18 @@ Compute methods for OAT.
 @version: 0.7
 """
 
-import time
 import pandas as pd
 from scipy.spatial import ConvexHull
 from sklearn.decomposition import PCA
 import cv2
 from skimage import io
 import numpy as np
-from modules.tools import tools
+from modules.utils.tools import tools
+from modules.utils.clustering import *
 
 class compute():
     
-    def SpotsLinks(df):
+    def links(df):
         """
         Generate a Series containing , for each track (row), the list of 
         spots ID that they are composed of, in chronological order.
@@ -60,9 +60,74 @@ class compute():
                                index = [df.loc[idx[0]]["TRACK_ID"] 
                                         for idx in spotsLinks])
     
-        return spotsLinks  
+        return spotsLinks
     
-    def CellVoxels(df, filepath, offset = 10, outerThres = 0.9):
+    def vectors(df, filtering = False, center = None, 
+                rescaling = [1, 1, 1], inplace = True):
+        """
+        Compute displacement vectors for every spots in the tracks dataframe 
+        and add them to it.
+        
+        Vectors are computed based on the sequence of the track they're in.
+        That means that vectors are computed between 2 following spots of a 
+        given track.
+        
+        They are saved in the same line as the origin spot of the vector.
+        
+        Parameters
+        ----------
+        filtering : bool, optional
+            If True, use computeClusters() on tracks dataframe and keep the 
+            selected ones (F_SELECT = True).
+        aligned : bool, optional
+            If True, compute displacement vectors for all aligned coordinates.
+            See self.alignRotAxis().
+        rescaling : list, optional
+            Scaling factor for the coordinates. List must be as follow :
+            [Xfactor, Yfactor, Zfactor].
+    
+        """
+        # Creating a dataframe to store vectors as they are computed.
+        # Each row is a vector with its index being the ID of its origin spot.
+        vectors = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
+                               dtype = "float")
+        
+        spotsLinks = compute.links(df)
+        
+        # Computing vectors, track by track.
+        for trackID in spotsLinks.index :
+            for spot in range(len(spotsLinks[trackID])-1) :
+                
+                # Retrieving spot and target spot IDs.
+                spotID = spotsLinks[trackID][spot]
+                nextSpotID = spotsLinks[trackID][spot+1]
+
+                # Retrieving the spot and target spot coordinates                    
+                spotInfo = df.loc[spotID, ["X", "Y", "Z"]]
+                nextSpotInfo = df.loc[nextSpotID, ["X", "Y", "Z"]]
+
+                # Adding the computed vectors to the vectos dataframe.
+                vectors.loc[spotID] = tools.displacement_vector(spotInfo, 
+                                                                nextSpotInfo,
+                                                                toList = True)
+                
+            # Adding a null vector as the last spot don't have any vector.
+            vectors.loc[spotsLinks[trackID][-1]] = 3*[np.nan]
+            
+        ## Clustering and removing bad spots in df dataframe if it 
+        ## hasn't already been done.     
+        if filtering and center is not None:
+            clustering.computeClusters(df, center)
+            selected = df[df["F_SELECT"]].index
+            vectors = vectors.loc[selected]
+        
+        if inplace :
+            return pd.concat([df, vectors], axis = 1)
+        
+        else :
+            return vectors
+    
+    def voxels(df, filepath, offset = 10, outerThres = 0.9):
         """
         Compute voxels of cells. For each time point, the corresponding image
         is loaded as an array. We get a threshold by getting the minimal pixel
@@ -81,11 +146,6 @@ class compute():
             be set to 0. Used to improve plotting speed. The default is 0.9.
 
         """
-        
-        clock = time.time()
-            
-        print("# Computing cell voxels ...")
-        
         # Opening the image.
         image = io.imread(filepath)
         
@@ -124,20 +184,59 @@ class compute():
         for coord in toChange:
             imarray[coord[0], coord[1], coord[2]] = 0
     
-        print("   Elapsed time :", time.time()-clock, "s")
         return imarray
+    
+    def drift(df):
+        """
+        Compute the drift of the organoid between time points.
+
+        """
         
-    def ConvexHull(df):
+        data = pd.DataFrame(index = df["TP"].unique().tolist())
+        
+        # Creating DataFrames to hold computation results. 
+        centroids = pd.DataFrame(dtype = "float", 
+                                 columns = ["Cent_X", "Cent_Y", "Cent_Z"])
+        
+        drift = pd.DataFrame(dtype = "float", columns = ["drift_distance"])
+        
+        vectors = pd.DataFrame(dtype = "float", 
+                               columns = ["drift_uX", "drift_vY", "drift_wZ"])
+        
+        # Iterating over time point.
+        for tp in df["TP"].unique().tolist():
+            
+            # Extracting the subdataframe containing the information for a 
+            # given file.
+            subdf = df[df["TP"] == tp]
+            
+            # Getting the centroid for this tp.
+            centroids.loc[tp] = tools.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
+            
+            # If we're not at the first file, we can compute the drift vector 
+            # between the centroids from the n-1 and n time point.
+            # The drift vector is saved with the n-1 time point index. 
+            if tp >= 1 :
+                vectors.loc[tp-1] = tools.computeVectors(centroids.iloc[tp-1],
+                                                       centroids.iloc[tp],
+                                                       toList = True)
+                
+                drift.loc[tp] = tools.euclidDist(centroids.iloc[tp], 
+                                                       centroids.iloc[tp-1])
+            
+        # Merging the several dataframes to data.
+        data = pd.concat([data, centroids], axis = 1)
+        data = pd.concat([data, vectors], axis = 1)
+        data = pd.concat([data, drift], axis = 1)
+
+        return data
+        
+    def volume(df):
         """
         Use the Convex Hull algorithm of scipy to get the cells that are 
         forming the outershell as well as the volume of the organoid. 
 
-        """
-        
-        clock = time.time()
-        
-        print("# Computing convex hull for each time points ...")
-        
+        """       
         data = pd.DataFrame(index = df["TP"].unique().tolist())
         
         # Creating 2 buffer lists.
@@ -176,75 +275,15 @@ class compute():
         data = pd.concat([data, volume], axis = 1)
         data["radius"] = [(3*V/(4*np.pi))**(1/3) for V in data["volume"]]
         
-        print("   Elapsed time :", time.time()-clock, "s")
         return data
         
-    def Drift(df):
-        """
-        Compute the drift of the organoid between time points.
-
-        """
-        clock = time.time()
-        print("# Computing the drift of the organoid between time points ...")
-        
-        data = pd.DataFrame(index = df["TP"].unique().tolist())
-        
-        # Creating DataFrames to hold computation results. 
-        centroids = pd.DataFrame(dtype = "float", 
-                                 columns = ["Cent_X", "Cent_Y", "Cent_Z"])
-        
-        drift = pd.DataFrame(dtype = "float", columns = ["drift_distance"])
-        
-        vectors = pd.DataFrame(dtype = "float", 
-                               columns = ["drift_uX", "drift_vY", "drift_wZ"])
-        
-        # Iterating over time point.
-        for tp in df["TP"].unique().tolist():
-            
-            # Extracting the subdataframe containing the information for a 
-            # given file.
-            subdf = df[df["TP"] == tp]
-            
-            # Getting the centroid for this tp.
-            centroids.loc[tp] = tools.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
-            
-            # If we're not at the first file, we can compute the drift vector 
-            # between the centroids from the n-1 and n time point.
-            # The drift vector is saved with the n-1 time point index. 
-            if tp >= 1 :
-                vectors.loc[tp-1] = tools.computeVectors(centroids.iloc[tp-1],
-                                                       centroids.iloc[tp],
-                                                       toList = True)
-                
-                drift.loc[tp] = tools.euclidDist(centroids.iloc[tp], 
-                                                       centroids.iloc[tp-1])
-            
-        # Merging the several dataframes to data.
-        data = pd.concat([data, centroids], axis = 1)
-        data = pd.concat([data, vectors], axis = 1)
-        data = pd.concat([data, drift], axis = 1)
-        
-        # # Creating a summary series if not already.
-        # if not hasattr(self, "summary"):
-        #     self.summary = pd.Series(name = "Summary", dtype = "float")
-        # self.summary["Total_Distance"] = data["drift_distance"].sum()
-        # if "Mean_radius" in data.columns:
-        #     self.summary["D/R"] = (self.summary["Total_Distance"]/
-        #                            data["Mean_radius"].mean())
-            
-        print("   Elapsed time :", time.time()-clock, "s")
-        return data
-        
-    def translatedCoord(df):
+    def translation(df, inplace = True):
         """
         Translate the coordinates of all points within df to get the
         centroid of the organoid at [0, 0, 0].
         The translated coordinates are added to df.
 
         """
-        clock = time.time()
-        print("# Translating spots coordinates to [0, 0, 0] ...")
-        
         # Setting the center coordinates.
         center = pd.Series([0, 0, 0], index = ["X", "Y", "Z"])
         
@@ -261,7 +300,7 @@ class compute():
             # Computing the centroid as well as the translation between the 
             # centroid and the center coordinates.
             centroid = tools.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
-            translation = tools.computeVectors(center, centroid)
+            translation = tools.displacement_vector(center, centroid)
             
             # Creating a buffer list to store new coordinates.
             new_coords = []
@@ -278,18 +317,18 @@ class compute():
                                              columns = ["Trans_X", "Trans_Y", 
                                                         "Trans_Z"], 
                                              dtype = "float")])
+        if inplace :
+            return pd.concat([df, coords], axis = 1)
         
-        print("   Elapsed time :", time.time()-clock, "s")
-        return coords
+        else : 
+            return coords
     
-    def RotationAxis(df):
+    def rotation_axis(df):
         """
         Compute the rotation axis of the dataset, at each time point.
         Update data with the colinear vectors of the rotation axis.
 
         """
-        clock = time.time()
-        print("# Computing the rotation axis in each time points ...") 
         
         data = pd.DataFrame(index = df["TP"].unique().tolist())
             
@@ -320,7 +359,7 @@ class compute():
                                       columns = ["uX", "vY", "wZ"])
                 
                 # Computingthe crossproduct.
-                RA = list(tools.crossProduct(tempDF))
+                RA = list(tools.cross_product(tempDF))
                 
                 # Saving coordinates to th dataframe.
                 componentVectors.loc[tp] = [V1[0], V1[1], V1[2], 
@@ -330,18 +369,15 @@ class compute():
         # Merging componentVectors with data.
         data = pd.concat([data, componentVectors], axis = 1)
         
-        print("   Elapsed time :", time.time()-clock, "s")
         return data
         
-    def alignedRotAxis(df, data):
+    def alignment(df, data, inplace = True):
         """
         Rotate the points of df to get the axis of rotation aligned 
         with the Z axis. New coordinates are saved in df in 
         "Aligned_..." columns.
 
         """
-        
-        clock = time.time()
         
         # # Running required functions
         # if not "Cent_X" in data.columns :
@@ -350,8 +386,6 @@ class compute():
         #     compute.computeRotationAxis()
         # if not "Trans_X" in df.columns :
         #     compute.translateCoord()
-            
-        print("# Aligning the rotation axis and the Z axis ...")
             
         # Trying to align all rotation axis vectors with Z.
         # First aligning with X to get 0 on the Y axis.
@@ -414,24 +448,14 @@ class compute():
         
         newCoords.columns = ["Aligned_X", "Aligned_Y", "Aligned_Z"]
         
-        # self.getVectors(aligned = True)
+        if inplace :
+            return (pd.concat([df, newCoords], axis = 1), 
+                    pd.concat([data, newRA], axis = 1))
         
-        # self.transAngles = transAngles
+        else :
+            return newCoords, newRA
         
-        print("   Elapsed time :", time.time()-clock, "s")
-        
-        return newCoords, newRA
-        
-    def AngularVelocity(df, data):
-        
-        clock = time.time()
-        
-        # if not hasattr(self, "tracks") :
-        #     self.getVectors()
-        # if not "Aligned_X" in df.columns :
-        #     self.alignRotAxis()
-        
-        print("# Computing angular velocity ...")
+    def angular_velocity(df, data, inplace = True):
         
         subdf = df.copy()
         
@@ -440,7 +464,7 @@ class compute():
         
         for ID in subdf.index:
             
-            distance[ID] = tools.euclidDist([0, 0], 
+            distance[ID] = tools.euclid_distance([0, 0], 
                                           list(subdf.loc[ID, ["Aligned_X",
                                                               "Aligned_Y"]]))
             
@@ -456,8 +480,8 @@ class compute():
             
             vectors = pd.concat([dispVector.to_frame().T, RAvect.to_frame().T])
             
-            velocity = abs((tools.crossProduct(vectors)**2).sum())**(1/2)/(
-                distance[ID])
+            velocity = abs((tools.cross_product(vectors)**2).sum())**(1/2)/(
+                       distance[ID])
             
             angularVelocity[ID] = velocity
         
@@ -476,7 +500,10 @@ class compute():
             velocityByTP.loc[tp] = [mean, std]
             
         velocityByCell.drop(columns = "TP", inplace = True)
-            
-        print("   Elapsed time :", time.time()-clock, "s")
         
-        return velocityByTP, velocityByCell
+        if inplace :
+            return pd.concat([data, velocityByTP], axis = 1),\
+                    pd.concat([df, velocityByCell], axis = 1)
+        
+        else :
+            return velocityByTP, velocityByCell

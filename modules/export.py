@@ -13,6 +13,20 @@ import pandas as pd
 
 class export():
     
+    def toCSV(df, savepath):
+        """
+        Save the given dataframe as a .csv at the given path.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Dataframe to save.
+        savepath : str
+            Full path of the output file.
+
+        """
+        df.to_csv(savepath)
+    
     def toMatLab(df, savepath):
         maxLength = max([df[df["TP"] == tp].shape[0] 
                          for tp in df["TP"].unique().tolist()])
