@@ -9,9 +9,15 @@ Preprocessing part analyzing component of OAT.
 import os
 import time
 import pandas as pd
+
+import matplotlib.pyplot as plt 
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.lines import Line2D
+
 from modules.utils.filemanager import *
 from modules.utils.clustering import *
 from modules.utils.image import *
+from modules.utils.tools import *
 
 class preprocessing():
     
@@ -163,8 +169,8 @@ class preprocessing():
         step_time = time.time()
         print("Clustering spots ...", end = " ")
         df = clustering.compute_clusters(df, center, clust_eps, 
-                                        clust_min_samples, cIter, cSample, 
-                                        threshold, rescaling)
+                                         clust_min_samples, cIter, cSample, 
+                                         threshold, rescaling)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
         ## Getting the ROI using clustering results.
@@ -190,3 +196,67 @@ class preprocessing():
         print("")
         print("Image saved as :", savepath)
         print("Total time :", str(round(time.time()-start_time, 2))+"s")
+        
+        return df
+        
+    def show_spots(df, TP, show = True, save = False, savepath = None,
+                   show_centroids = True, color_clusters = True):
+        
+        ## Setting which time points to display.
+        if not isinstance(TP, int) :
+            raise TypeError("TP must be int")
+            
+        ## Creating the figure.
+        fig = plt.figure(figsize=(10, 7), dpi = 400)
+        legend = []
+            
+        subdf = df[df["TP"] == TP].copy()
+        
+        ax = fig.add_subplot(111, projection = "3d")
+        
+        if color_clusters and "F_SELECT" in subdf.columns:
+            t_df = subdf[subdf["F_SELECT"]]
+            f_df = subdf[subdf["F_SELECT"] == False]
+            
+            ax.scatter(t_df["X"], t_df["Y"], t_df["Z"], c = "green", s = 50)
+            ax.scatter(f_df["X"], f_df["Y"], f_df["Z"], c = "orange", s = 20)
+            
+            legend.append(Line2D([0], [0], marker = 'o', 
+                                 color = "green", 
+                                 label = 'Selected spots', 
+                                 markerfacecolor = "green", 
+                                 markersize=7, ls = ''))
+            
+            
+        else :
+            ax.scatter(subdf["X"], subdf["Y"], subdf["Z"], c = "skyblue")
+        
+        if show_centroids :
+            cx, cy, cz = tools.get_centroid(subdf)
+            ax.scatter(cx, cy, cz, c="red", marker = "^", s = 50)
+            
+            legend.append(Line2D([0], [0], marker = '^', 
+                                 color = "red", 
+                                 label = 'Raw centroid', 
+                                 markerfacecolor = "red", 
+                                 markersize=7, ls = ''))
+        
+        ax.set_title("Detected spots")
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        
+        ax.legend(handles = legend, loc = 'best')
+        
+        if show :
+            plt.show()
+            
+        if save and savepath is not None :
+            plt.savefig(savepath, dpi = 400)
+            
+        plt.close()
+            
+            
+            
+            
+            

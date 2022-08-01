@@ -12,6 +12,12 @@ import seaborn as sns
 
 class figures():
     
+    
+        
+        
+        
+        
+    
     def showDistances(df, TP = "all", bins = 30, show = True, savepath = None, 
                       cmap = 'tab10'):
         """
