@@ -29,7 +29,7 @@ class vectors():
 
         """
         
-        # Importing the files.
+        ## Importing the files.
         files = filemanager.search_file(dirpath, "csv")
         
         attributes = []

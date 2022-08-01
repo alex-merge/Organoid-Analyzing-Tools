@@ -13,7 +13,7 @@ from modules.utils.tools import tools
 
 class clustering():
     
-    def selectCluster(subdf, center, column, threshold = 10):
+    def select_cluster(subdf, center, column, threshold = 10):
         """
         Search for the cluster that is the most likely of being the
         organoid cluster.
@@ -57,8 +57,8 @@ class clustering():
         
         # Computing the distance for each clusters.
         for ID in clustersID :
-            centroid = tools.getCentroid(subdf[subdf[column] == ID])
-            distance = tools.EuclidDist(centroid, center)
+            centroid = tools.get_centroid(subdf[subdf[column] == ID])
+            distance = tools.euclid_distance(centroid, center)
             dist.loc[ID] = distance
         
         # Sorting from the lowest to the greatest distance.
@@ -76,7 +76,7 @@ class clustering():
         # Returning the selection result as a pd.Series
         return subdf[column] == selectedClusterID      
     
-    def clusteringEngine(df, center, cIter = 100, cSample = 10, 
+    def clustering_core(df, center, cIter = 100, cSample = 10, 
                          eps = 40, min_samples = 3, threshold = 10):
         """
         Cluster and select the spots that are more likely to be part of the
@@ -125,7 +125,7 @@ class clustering():
     
         """
         # Getting the centroid.
-        centroids = [tools.getCentroid(df.sample(cSample, axis=0)) \
+        centroids = [tools.get_centroid(df.sample(cSample, axis=0)) \
                      for k in range(cIter)]
         centroids = pd.DataFrame(centroids, columns=["X", "Y", "Z"])
         centroid = [centroids["X"].median(), 
@@ -135,7 +135,7 @@ class clustering():
         # Computing the distance between each point and the centroid.
         distance = pd.Series(dtype = "float", name = "DISTANCE")
         for points in df.index:
-            distance[points] = tools.EuclidDist(
+            distance[points] = tools.euclid_distance(
                 list(df.loc[points, ["X", "Y", "Z"]]), 
                 centroid)
         
@@ -147,9 +147,10 @@ class clustering():
         Results = cluster.to_frame()
         
         # Selecting the cluster based on the clustering.selectCluster method.    
-        selected = clustering.selectCluster(pd.concat([df, cluster], axis = 1),
-                                     center, column = "A_CLUSTER",
-                                     threshold = threshold)
+        selected = clustering.select_cluster(pd.concat([df, cluster], 
+                                                       axis = 1),
+                                             center, column = "A_CLUSTER",
+                                             threshold = threshold)
         selected.name = "A_SELECT"
         
         # Adding the selection results to Results dataframe.
@@ -166,9 +167,10 @@ class clustering():
         Results = pd.concat([Results, cluster], axis = 1)
         
         # Selecting the right cluster once again using the same method.
-        selected = clustering.selectCluster(pd.concat([subdf, cluster], axis = 1),
-                                     center, column = "F_CLUSTER", 
-                                     threshold = threshold)
+        selected = clustering.select_cluster(pd.concat([subdf, cluster], 
+                                                       axis = 1),
+                                             center, column = "F_CLUSTER", 
+                                             threshold = threshold)
         selected.name = "F_SELECT"
         
         # Merging the selection to the Results dataframe.
@@ -181,7 +183,7 @@ class clustering():
         
         return Results, distance, centroids
         
-    def computeClusters(df, center, eps = 40, min_samples = 3, 
+    def compute_clusters(df, center, eps = 40, min_samples = 3, 
                         cIter = 1000, cSample = 10, threshold = 10, 
                         rescaling = [1, 1, 1], inplace = True):
         """
@@ -227,7 +229,7 @@ class clustering():
         for tp in df["TP"].unique().tolist():
             subdf = df[df["TP"] == tp]
             subdf = tools.reScaling(subdf, ratio = rescaling)
-            clusterResults, dist, cent = clustering.clusteringEngine(subdf, 
+            clusterResults, dist, cent = clustering.clustering_core(subdf, 
                                          center, cIter, cSample, eps, 
                                          min_samples, threshold)
             
@@ -249,7 +251,7 @@ class clustering():
         else :
             return Results
         
-    def selectROI(subdf, std = 15, eps = 2, min_samples = 3, offset = 5):
+    def select_ROI(subdf, std = 15, eps = 2, min_samples = 3, offset = 5):
         """
         Method to get the most representative value from a pd.Series in the 
         context of the search of the ROI.

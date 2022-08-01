@@ -14,7 +14,7 @@ import os
 
 class image():
     
-    def loadTif(filepath):
+    def load_tif(filepath):
         """
         Load tifs in the directory or the specific given file and returns it
         as an array.
@@ -52,7 +52,7 @@ class image():
         ## Loading and returning the images as arrays.
         for file in files :
             stream = io.imread(file)
-            imarray = np.array(stream, dtype="uint8")
+            imarray = np.array(stream)
             
             fullArray.append(imarray)
             
@@ -63,7 +63,7 @@ class image():
                 
         
     
-    def unstackTif(filepath, suffix, savedir):
+    def unstack_tif(filepath, suffix, savedir):
         """
         Unstack an image in the given save directory.
     
@@ -84,7 +84,7 @@ class image():
         for tp in range(imarray.shape[0]):
             image.saveTif(imarray[tp], savedir+"\\"+suffix+"_"+str(tp)+".tif")
             
-    def stackTif(filepath, savepath):
+    def stack_tif(filepath, savepath):
         """
         Stack multiple tif into one.
 
@@ -100,7 +100,7 @@ class image():
         imarray = image.loadTif(filepath)
         image.saveTif(imarray, savepath)
         
-    def denoising(ROI, imarray):
+    def denoise(ROI, imarray):
         """
         Load a tif image and set all pixels that are not in the ROI to 0.
         Used in the cleanImage method.
@@ -135,7 +135,7 @@ class image():
         
         return imarray
     
-    def saveTif(imarray, savepath):
+    def save_tif(imarray, savepath):
         """
         Save the given array as a tif file in the given directory.
 
@@ -155,13 +155,33 @@ class image():
             tifffile.imwrite(savepath, imarray, imagej = True,
                              metadata={'axes': "TZYX"})
             
-    def getVolCenter(directory):
+    def get_shape(dirpath):
+        """
+        Return the shapes of the 3D tifs in the given directory.
+        Basically, it loads every 3D tifs into a 4D tifs and return the 
+        3 wanted dimensions. 
+
+        Parameters
+        ----------
+        dirpath : str
+            Directory of the images to get the shape from.
+
+        Returns
+        -------
+        list.
+            Shapes for the given dimensions : [X, Y, Z]
+
+        """
+        imarray = image.load_tif(dirpath)
+        return [imarray.shape[-3], imarray.shape[-2], imarray.shape[-1]]
+    
+    def get_center(dirpath):
         """
         Return the center point of the 3D tifs in the given directory.
 
         Parameters
         ----------
-        directory : str
+        dirpath : str
             Directory of the images to get the center point from.
 
         Returns
@@ -170,7 +190,6 @@ class image():
             Coordinates of the center [X, Y, Z]
 
         """
-        
-        imarray = image.loadTif(directory)
-        return [imarray.shape[-3], imarray.shape[-2], imarray.shape[-1]]
+        shapes = image.get_shape(dirpath)
+        return [dim/2 for dim in shapes]
         

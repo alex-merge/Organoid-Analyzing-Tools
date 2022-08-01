@@ -59,7 +59,7 @@ class tools():
         
         return out_df
     
-    def getCentroid(df):
+    def get_centroid(df):
         """
         Process the "euclid" centroid from a set of points. Get the centroid by
         getting the mean value on each axis.
