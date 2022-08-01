@@ -97,26 +97,33 @@ class preprocessing():
         
         return df
             
-    def get_ROI(df, std = 15, eps = 2, min_samples = 3, offset = 5):
+    def get_ROI(df, std = 15, eps = 2, min_samples = 3, roi_offset = 5):
         """
         Processing the limits of the ROI (region of interest).
         The ROI is the smallest cubic volume where the organoid is, 
         whatever the time point is.
-        These limits are saved in the self.ROI.
-        Limits for each frames are stored in the self.localROI.
         
         Parameters
         ----------
-        std : int
-            Standard deviation threshold.
+        df : pd.DataFrame
+            Dataframe containing spots coordinates and time points.
+        std : int, optional
+            Standard deviation threshold. If below that threshold, 
+            the dispersion isn't enough to correctly use DBSCAN.
+            The default is 15.
         eps : int, optional
             Radius of search for the DBSCAN algorithm. The default is 2.
         min_samples : int , optional
             Min. number of neighbors for DBSCAN. The default is 3.
-        offset : float, optional
-            Value to add or retrieve to the max or the min value to take into 
-            account the size of the real object. 
-            The default is 5.
+        roi_offset : float, optional
+            ROI offset. The default is 5.
+            
+        Returns
+        -------
+        ROI : pd.DataFrame
+            Dataframe containing ROI limits on each axis, for each time point.
+            Contains as well the "global" ROI which contains the organoïd 
+            whatever the time point is.
         
         """
         # Creating the dataframe that contains all the ROI limits.
@@ -142,7 +149,7 @@ class preprocessing():
             subdf = ROI[col]
 
             globalROI.append(clustering.select_ROI(subdf, std, eps, 
-                                                   min_samples, offset))
+                                                   min_samples, roi_offset))
             
         ROI.loc["Global"] = globalROI
                
@@ -150,10 +157,64 @@ class preprocessing():
        
     def denoise_timelapse(csv_dirpath, img_dirpath, savepath,
                   std = 15, roi_eps = 2, roi_min_samples = 3, 
-                  offset = 5, clust_eps = 40, clust_min_samples = 3, 
-                  cIter = 1000, cSample = 10, threshold = 10, 
+                  roi_offset = 5, clust_eps = 40, clust_min_samples = 3, 
+                  centroid_iter = 1000, centroid_sample = 10, min_cells = 10, 
                   rescaling = [1, 1, 1]):
+        """
+        Create a "denoised" timelapse from tifs images in img_dirpath, using 
+        spots segmentation of csv files in csv_dirpath. 
+        Each image and csv file correspond to a specific time point.
         
+        The timelapse is saved in savepath which also contains the name 
+        of the file.
+
+        Parameters
+        ----------
+        csv_dirpath : str
+            Path to the csv file folder.
+        img_dirpath : str
+            Path to the images folder.
+        savepath : str
+            Full path of the timelapse file.
+        std : int, optional
+            Standard deviation threshold. If below that threshold, 
+            the dispersion isn't enough to correctly use DBSCAN.
+            The default is 15.
+        roi_eps : float, optional
+            Radius of search for the DBSCAN algorithm when selecting ROI 
+            limits. 
+            The default is 2.
+        roi_min_samples : int, optional
+            Min. number of neighbors for DBSCAN when selecting ROI limits. 
+            The default is 3.
+        roi_offset : float, optional
+            ROI offset. The default is 5.
+        clust_eps : float, optional
+            Radius of search for the DBSCAN algorithm when main clustering. 
+            The default is 40.
+        clust_min_samples : int, optional
+            Min. number of neighbors for DBSCAN when main clustering. 
+            The default is 3.
+        centroid_iter : int, optional
+            Number of iteration for searching the best centroid. 
+            The default is 1000.
+        centroid_sample : int, optional
+            Number of random spots to compute the centroid from. 
+            The default is 10.
+        min_cells : int, optional
+            Minimal cells for a cluster to be considered. Overpassed if none
+            of the clusters contains more than this threshold.
+            The default is 10.
+        rescaling : list, optional
+            Rescaling matrix where coordinates are multiplied by the given 
+            factor : [X, Y, Z]. The default is [1, 1, 1].
+
+        Returns
+        -------
+        df : pd.DataFrame
+            Full dataframe containing spots, time points, cluster info.
+
+        """
         start_time = time.time()
         
         ## Opening and merging every csv in the 
@@ -169,14 +230,14 @@ class preprocessing():
         step_time = time.time()
         print("Clustering spots ...", end = " ")
         df = clustering.compute_clusters(df, center, clust_eps, 
-                                         clust_min_samples, cIter, cSample, 
-                                         threshold, rescaling)
+                                         clust_min_samples, centroid_iter, centroid_sample, 
+                                         min_cells, rescaling)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
         ## Getting the ROI using clustering results.
         step_time = time.time()
         print("Getting the ROI using clustering results ...", end = " ")
-        ROI = preprocessing.get_ROI(df, std, roi_eps, roi_min_samples, offset)
+        ROI = preprocessing.get_ROI(df, std, roi_eps, roi_min_samples, roi_offset)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
         cleanArray = []
@@ -201,6 +262,28 @@ class preprocessing():
         
     def show_spots(df, TP, show = True, save = False, savepath = None,
                    show_centroids = True, color_clusters = True):
+        """
+        Create a figure showing spots for a given time point.
+        The figure can be saved. See parameters below.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Dataframe containing coordinates and time points (X, Y, Z, TP).
+        TP : int
+            Time point to show the spots.
+        show : bool, optional
+            Show the figure. The default is True.
+        save : bool, optional
+            Save the figure, need savepath to work. The default is False.
+        savepath : str, optional
+            Full path of the output figure. The default is None.
+        show_centroids : bool, optional
+            Add the centroid to the figure. The default is True.
+        color_clusters : bool, optional
+            Add cluster information to the figure. The default is True.
+
+        """
         
         ## Setting which time points to display.
         if not isinstance(TP, int) :
@@ -208,6 +291,11 @@ class preprocessing():
             
         ## Creating the figure.
         fig = plt.figure(figsize=(10, 7), dpi = 400)
+        plt.style.use("seaborn-paper")
+        
+        ## Set global font
+        plt.rcParams.update({'font.family':'Montserrat'})
+        
         legend = []
             
         subdf = df[df["TP"] == TP].copy()
@@ -223,7 +311,7 @@ class preprocessing():
             
             legend.append(Line2D([0], [0], marker = 'o', 
                                  color = "green", 
-                                 label = 'Selected spots', 
+                                 label = 'Selected spots',
                                  markerfacecolor = "green", 
                                  markersize=7, ls = ''))
             
@@ -237,11 +325,11 @@ class preprocessing():
             
             legend.append(Line2D([0], [0], marker = '^', 
                                  color = "red", 
-                                 label = 'Raw centroid', 
+                                 label = 'Raw centroid',
                                  markerfacecolor = "red", 
                                  markersize=7, ls = ''))
         
-        ax.set_title("Detected spots")
+        ax.set_title("Detected spots for time point "+str(TP), fontsize = 15)
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_zlabel('z')

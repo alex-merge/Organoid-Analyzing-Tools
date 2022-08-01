@@ -13,7 +13,7 @@ from modules.utils.tools import tools
 
 class clustering():
     
-    def select_cluster(subdf, center, column, threshold = 10):
+    def select_cluster(subdf, center, column, min_cells = 10):
         """
         Search for the cluster that is the most likely of being the
         organoid cluster.
@@ -24,7 +24,7 @@ class clustering():
         the volume.
         
         Finally, it returns the cluster that is the closest to the center and
-        that contains more than {threshold} spots.
+        that contains more than {min_cells} spots.
     
         Parameters
         ----------
@@ -35,7 +35,7 @@ class clustering():
             Center coordinates of the whole volume as follow [X, Y, Z].
         column : str
             Name of the column that contains cluster IDs.
-        threshold : int, optional
+        min_cells : int, optional
             Number of spots a cluster must have to be selected. The default is
             10.
     
@@ -65,11 +65,11 @@ class clustering():
         dist.sort_values(ascending = True, inplace = True)
         
         # Going through the closest to farthest cluster until it contains more 
-        # than {threshold} spots. If there are no cluster that meets both 
+        # than {min_cells} spots. If there are no cluster that meets both 
         # conditions, we take the first one.
         selectedClusterID = 0
         for idx in range(len(dist.index)):
-            if clustersInfo[dist.index[idx]] >= threshold:
+            if clustersInfo[dist.index[idx]] >= min_cells:
                 selectedClusterID = dist.index[idx]
                 break
         
@@ -77,7 +77,7 @@ class clustering():
         return subdf[column] == selectedClusterID      
     
     def clustering_core(df, center, cIter = 100, cSample = 10, 
-                         eps = 40, min_samples = 3, threshold = 10):
+                         eps = 40, min_samples = 3, min_cells = 10):
         """
         Cluster and select the spots that are more likely to be part of the
         organoid.
@@ -110,7 +110,7 @@ class clustering():
             Radius of search for the 2nd DBSCAN algorithm. The default is 40.
         min_samples : int , optional
             Min. number of neighbors for the 2nd DBSCAN. The default is 3.
-        threshold : int, optional
+        min_cells : int, optional
             Number of spots a cluster must have to be selected. The default is
             10.
     
@@ -150,7 +150,7 @@ class clustering():
         selected = clustering.select_cluster(pd.concat([df, cluster], 
                                                        axis = 1),
                                              center, column = "A_CLUSTER",
-                                             threshold = threshold)
+                                             min_cells = min_cells)
         selected.name = "A_SELECT"
         
         # Adding the selection results to Results dataframe.
@@ -170,7 +170,7 @@ class clustering():
         selected = clustering.select_cluster(pd.concat([subdf, cluster], 
                                                        axis = 1),
                                              center, column = "F_CLUSTER", 
-                                             threshold = threshold)
+                                             min_cells = min_cells)
         selected.name = "F_SELECT"
         
         # Merging the selection to the Results dataframe.
@@ -184,7 +184,7 @@ class clustering():
         return Results, distance, centroids
         
     def compute_clusters(df, center, eps = 40, min_samples = 3, 
-                        cIter = 1000, cSample = 10, threshold = 10, 
+                        cIter = 1000, cSample = 10, min_cells = 10, 
                         rescaling = [1, 1, 1], inplace = True):
         """
         Clustering the spots for each frame using the .clusteringEngine() 
@@ -203,7 +203,7 @@ class clustering():
             See .clusteringEngine() method. The default is 1000.
         cSample : int, optional
             See .clusteringEngine() method. The default is 10.
-        threshold : int, optional
+        min_cells : int, optional
             See .clusteringEngine() method. The default is 10.
         rescaling : list, otpional
             Rescale the spots coordinates on each axis by the given value :
@@ -231,7 +231,7 @@ class clustering():
             subdf = tools.reScaling(subdf, ratio = rescaling)
             clusterResults, dist, cent = clustering.clustering_core(subdf, 
                                          center, cIter, cSample, eps, 
-                                         min_samples, threshold)
+                                         min_samples, min_cells)
             
             dist = dist.to_frame()
             dist.columns = ["Distance"]
