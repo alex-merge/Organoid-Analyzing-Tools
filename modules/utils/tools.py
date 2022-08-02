@@ -59,7 +59,7 @@ class tools():
         
         return out_df
     
-    def get_centroid(df):
+    def get_centroid(df, asarray = False):
         """
         Process the "euclid" centroid from a set of points. Get the centroid by
         getting the mean value on each axis.
@@ -78,7 +78,9 @@ class tools():
         centroid = []
         for axis in ["X", "Y", "Z"]:
             centroid.append(df[axis].mean())
-            
+        
+        if asarray :
+            return np.array(centroid)
         return centroid
     
     def cross_product(df):

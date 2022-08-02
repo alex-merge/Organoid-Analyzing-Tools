@@ -195,43 +195,59 @@ class compute():
 
         """
         
-        data = pd.DataFrame(index = df["TP"].unique().tolist())
+        TP = df["TP"].unique().tolist()
+        TP.sort()
         
-        # Creating DataFrames to hold computation results. 
-        centroids = pd.DataFrame(dtype = "float", 
-                                 columns = ["Cent_X", "Cent_Y", "Cent_Z"])
+        #data = pd.DataFrame(index = TP)
         
-        drift = pd.DataFrame(dtype = "float", columns = ["drift_distance"])
+        raw_centroid = pd.Series(index = TP, name = "Raw_centroid", 
+                                 dtype = "object")
+        drift_distance = pd.Series(index = TP, name = "Drift_distance", 
+                                 dtype = "float")
+        drift_vector = pd.Series(index = TP, name = "Drift_vector", 
+                                 dtype = "object")
         
-        vectors = pd.DataFrame(dtype = "float", 
-                               columns = ["drift_uX", "drift_vY", "drift_wZ"])
+        if "F_SELECT" in df.columns :
+            clust_centroid = pd.Series(index = TP, name = "Cluster_centroid", 
+                                       dtype = "object")
         
-        # Iterating over time point.
-        for tp in df["TP"].unique().tolist():
+        ## Iterating over time point.
+        for tp in TP:
             
-            # Extracting the subdataframe containing the information for a 
-            # given file.
             subdf = df[df["TP"] == tp]
+
+            ## Getting the centroid.
+            raw_centroid[tp] = tools.get_centroid(subdf, asarray = True)
             
-            # Getting the centroid for this tp.
-            centroids.loc[tp] = tools.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
+            try :
+                clust_centroid[tp] = tools.get_centroid(subdf[subdf["F_SELECT"]],
+                                                        asarray = True)
+            
+            except :
+                pass
             
             # If we're not at the first file, we can compute the drift vector 
             # between the centroids from the n-1 and n time point.
             # The drift vector is saved with the n-1 time point index. 
             if tp >= 1 :
-                vectors.loc[tp-1] = tools.computeVectors(centroids.iloc[tp-1],
-                                                       centroids.iloc[tp],
-                                                       toList = True)
                 
-                drift.loc[tp] = tools.euclidDist(centroids.iloc[tp], 
-                                                       centroids.iloc[tp-1])
-            
-        # Merging the several dataframes to data.
-        data = pd.concat([data, centroids], axis = 1)
-        data = pd.concat([data, vectors], axis = 1)
-        data = pd.concat([data, drift], axis = 1)
-
+                try : 
+                    drift_vector[tp-1] = clust_centroid[tp]-clust_centroid[tp-1]
+                    
+                
+                except :
+                    drift_vector[tp-1] = raw_centroid[tp]-raw_centroid[tp-1]
+                
+                drift_distance[tp-1] = np.linalg.norm(drift_vector[tp-1])
+        
+        try :
+            data = pd.concat([raw_centroid, clust_centroid, drift_distance,
+                              drift_vector], 
+                             axis = 1)
+        
+        except : 
+            data = pd.concat([raw_centroid, drift_distance, drift_vector], 
+                             axis = 1)
         return data
         
     def volume(df):

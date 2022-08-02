@@ -6,14 +6,53 @@ Plotting figures methods for OAT.
 @version: 0.7
 """
 import pandas as pd
+
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import seaborn as sns
 
+from modules.utils.tools import *
+
 class figures():
     
-    
+    def add_spots(ax, df, label = None, marker = "o", color = "navy", 
+                     size = 50):
         
+        cx, cy, cz = tools.get_centroid(df)
+        
+        ax.scatter(cx, cy, cz, c = color, marker = marker, s = size)
+        
+        if label is not None :
+            legend = Line2D([0], [0], marker = marker, color = color, 
+                            label = label, markerfacecolor = color, 
+                            markersize = 7, ls = '')
+            
+            return ax, legend
+        
+        return ax
+    
+    def add_3Dvectors(ax, df, col_name, label = None, marker = ">", 
+                    color = "black", length = None):
+        
+        if length is not None :
+            ax.quiver(df[col_name[0]].to_numpy(), df[col_name[1]].to_numpy(),
+                      df[col_name[2]].to_numpy(), df[col_name[3]].to_numpy(),
+                      df[col_name[4]].to_numpy(), df[col_name[5]].to_numpy(),
+                      color = color, length = length)
+        
+        else :
+            ax.quiver(df[col_name[0]].to_numpy(), df[col_name[1]].to_numpy(),
+                      df[col_name[2]].to_numpy(), df[col_name[3]].to_numpy(),
+                      df[col_name[4]].to_numpy(), df[col_name[5]].to_numpy(),
+                      color = color)
+            
+        if label is not None :
+            legend = Line2D([0], [0], marker = marker, color = color, 
+                                 label = label, markerfacecolor = color, 
+                                 markersize = 7, ls = '')
+            
+        return ax, legend
+    
         
         
         

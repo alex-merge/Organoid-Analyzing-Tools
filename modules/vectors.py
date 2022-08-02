@@ -18,6 +18,7 @@ from modules.utils.filemanager import *
 from modules.utils.clustering import *
 from modules.utils.compute import *
 from modules.utils.tools import *
+from modules.utils.figures import *
 
 class vectors():
     
@@ -77,13 +78,20 @@ class vectors():
                         inplace = True)
         tracks_df.rename(columns = {"POSITION_T":"TP"}, inplace = True)
         
+        # Merging coordinates into an array.
+        tracks_df[list("XYZ")] = tracks_df[list("XYZ")].astype("float")
+        coords = pd.Series([arr for arr in tracks_df[list("XYZ")].to_numpy()],
+                            index = tracks_df.index, name = "COORD")
+        tracks_df = pd.concat([tracks_df, coords], axis = 1)
+        
         # Keeping the interesting columns 
-        tracks_df = tracks_df.loc[:,["TRACK_ID", "QUALITY", "X", "Y", "Z", 
+        tracks_df = tracks_df.loc[:,["TRACK_ID", "QUALITY", "COORD", 
                                      "TP"]]
         edges_df = edges_df.loc[:,"TARGET"]
         
         # Setting the dataframes' values type
-        tracks_df = tracks_df.astype("float")
+        tracks_df[["QUALITY", "TP"]] = tracks_df[["QUALITY", "TP"]
+                                                 ].astype("float")
         tracks_df[["TRACK_ID", "TP"]] = tracks_df[["TRACK_ID", "TP"]
                                                   ].astype("int")
         edges_df = edges_df.astype("float")
@@ -95,9 +103,7 @@ class vectors():
         tracks = pd.concat([tracks_df, edges_df], axis = 1)
         
         # Rescaling the coordinates in case we need to.
-        tracks["X"] = tracks["X"]*rescaling[0]
-        tracks["Y"] = tracks["Y"]*rescaling[1]
-        tracks["Z"] = tracks["Z"]*rescaling[2]
+        tracks["COORD"] = [arr*np.array(rescaling) for arr in tracks["COORD"]]
         
         return tracks
     
@@ -117,6 +123,18 @@ class vectors():
         df = compute.vectors(df, filtering = filtering)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
+        ## Computing drift.
+        step_time = time.time()
+        print("Computing drift ...", end = " ")
+        data = compute.drift(df)
+        print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
+        
+        ## Computing volume and radius.
+        step_time = time.time()
+        print("Computing volume and radius ...", end = " ")
+        data = pd.concat([data, compute.volume(df)], axis = 1)
+        print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
+        
         ## Translating coords to the center ([0, 0, 0])
         step_time = time.time()
         print("Translating coordinates to the center ...", end = " ")
@@ -126,7 +144,7 @@ class vectors():
         ## Computing the axis of rotation vectors.
         step_time = time.time()
         print("Computing the axis of rotations ...", end = " ")
-        data = compute.rotation_axis(df)
+        data = pd.concat([data, compute.rotation_axis(df)], axis = 1)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
         ## Aligning axis of rotation with the Z axis.
@@ -202,60 +220,62 @@ class vectors():
         rel_vect_axis = {"X": "uX", "Y": "vY", "Z": "wZ"}
         quiver_col = axis_order + [rel_vect_axis[axis] for axis in axis_order]
         
+        ## Coloring or not the vectors according to their cluster.
         if color_clusters and "F_SELECT" in subdf.columns :
-            t_df = subdf[subdf["F_SELECT"]]
-            f_df = subdf[subdf["F_SELECT"] == False]
+
+            ax, new_legend = figures.add_3Dvectors(
+                ax, subdf[subdf["F_SELECT"]], quiver_col,
+                label = "Selected vectors", color = "green")
+            legend.append(new_legend)
             
-            ax.quiver(t_df[quiver_col[0]], t_df[quiver_col[1]], 
-                      t_df[quiver_col[2]], t_df[quiver_col[3]], 
-                      t_df[quiver_col[4]], t_df[quiver_col[5]],
-                      color = "green")
-            ax.quiver(f_df[quiver_col[0]], f_df[quiver_col[1]], 
-                      f_df[quiver_col[2]], f_df[quiver_col[3]], 
-                      f_df[quiver_col[4]], f_df[quiver_col[5]],
-                      color = "orange")
-            
-            legend.append(Line2D([0], [0], marker = ('>'), 
-                                 color = "green", 
-                                 label = 'Selected vectors',
-                                 markerfacecolor = "green", 
-                                 markersize=7, ls = ''))
-            
+            ax, new_legend = figures.add_3Dvectors(
+                ax, subdf[subdf["F_SELECT"] == False], quiver_col,
+                label = "Unselected vectors", color = "orange")
+            legend.append(new_legend)
+        
         else :
-            ax.quiver(subdf[quiver_col[0]], subdf[quiver_col[1]], 
-                      subdf[quiver_col[2]], subdf[quiver_col[3]], 
-                      subdf[quiver_col[4]], subdf[quiver_col[5]],
-                      color = "black")
+            ax = figures.add_3Dvectors(ax, subdf, quiver_col)
         
         ## Showing raw centroid and more if available/wanted.
         if show_centroid :
+            
+            ax, new_legend = figures.add_spots(ax, subdf, label = "Raw centroid",
+                                               marker = "^", color = "red") 
+            
+            if color_clusters and "F_SELECT" in subdf.columns :
+
+                ax, new_legend = figures.add_spots(
+                    ax, subdf[subdf["F_SELECT"]], label = "Cluster's centroid", 
+                    marker = "^", color = "navy") 
+        
+        if show_rot_axis and data is not None and "radius" in data.columns :
+            
+            RA_vect = data.loc[TP, ["RA_uX", "RA_vY", "RA_wZ"]].tolist()
+            
             if color_clusters and "F_SELECT" in subdf.columns :
                 cx, cy, cz = tools.get_centroid(subdf[subdf["F_SELECT"]])
-                
-                ax.scatter(cx, cy, cz, c="navy", marker = "^", s = 50)
-                
-                ## Adding the legend.
-                legend.append(Line2D([0], [0], marker = '^', 
-                                     color = "navy", 
-                                     label = "Cluster's centroid",
-                                     markerfacecolor = "navy", 
-                                     markersize=7, ls = ''))
             
-            ## Showing raw centroid.
-            cx, cy, cz = tools.get_centroid(subdf)
-            label_name = "Raw centroid"
+            else :
+                cx, cy, cz = tools.get_centroid(subdf)
                 
-            ax.scatter(cx, cy, cz, c="red", marker = "^", s = 50)
+            vect_scale = ((0.5*data.loc[TP, "radius"])/
+                          (tools.euclid_distance(RA_vect, [0, 0, 0])))
             
-            legend.append(Line2D([0], [0], marker = '^', 
-                                 color = "red", 
-                                 label = label_name,
-                                 markerfacecolor = "red", 
+            ax.quiver(cx, cy, cz, RA_vect[0], RA_vect[1], RA_vect[2], 
+                      color = "orange", length = vect_scale)
+            ax.quiver(cx, cy, cz, -RA_vect[0], -RA_vect[1], -RA_vect[2], 
+                      color = "orange", length = vect_scale)
+            
+            legend.append(Line2D([0], [0], marker = ('>'), 
+                                 color = "orange", 
+                                 label = 'Rotation axis',
+                                 markerfacecolor = "orange", 
                                  markersize=7, ls = ''))
         
-        if show_rot_axis :
-            pass
-        
+                
+            
+                
+                
         ax.set_title("Displacement vectors for time point "+str(TP), 
                      fontsize = 15)
         ax.set_xlabel('x')
@@ -265,7 +285,5 @@ class vectors():
         ax.legend(handles = legend, loc = 'best')
         
         plt.show()
-        
-
         
         
