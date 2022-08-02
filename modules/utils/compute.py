@@ -12,7 +12,8 @@ from sklearn.decomposition import PCA
 import cv2
 from skimage import io
 import numpy as np
-from modules.utils.tools import tools
+
+from modules.utils.tools import *
 from modules.utils.clustering import *
 
 class compute():
@@ -116,8 +117,10 @@ class compute():
             
         ## Clustering and removing bad spots in df dataframe if it 
         ## hasn't already been done.     
-        if filtering and center is not None:
-            clustering.computeClusters(df, center)
+        if filtering :
+            if center is None :
+                center = tools.get_centroid(df)
+            df = clustering.compute_clusters(df, center)
             selected = df[df["F_SELECT"]].index
             vectors = vectors.loc[selected]
         
@@ -299,7 +302,7 @@ class compute():
             
             # Computing the centroid as well as the translation between the 
             # centroid and the center coordinates.
-            centroid = tools.getCentroid(subdf.loc[:,["X", "Y", "Z"]])
+            centroid = tools.get_centroid(subdf.loc[:,["X", "Y", "Z"]])
             translation = tools.displacement_vector(center, centroid)
             
             # Creating a buffer list to store new coordinates.
@@ -378,45 +381,32 @@ class compute():
         "Aligned_..." columns.
 
         """
-        
-        # # Running required functions
-        # if not "Cent_X" in data.columns :
-        #     compute.computeDrift()
-        # if not "RA_uX" in data.columns :
-        #     compute.computeRotationAxis()
-        # if not "Trans_X" in df.columns :
-        #     compute.translateCoord()
-            
-        # Trying to align all rotation axis vectors with Z.
-        # First aligning with X to get 0 on the Y axis.
-        newCoords = df.loc[:, ["Trans_X", "Trans_Y", "Trans_Z"]]
+
+        newCoords = df[["Trans_X", "Trans_Y", "Trans_Z"]].copy()
         newCoords.columns = ["X", "Y", "Z"]
         
-        newRA = data.loc[:, ["RA_uX", "RA_vY", "RA_wZ"]]
+        newRA = data[["RA_uX", "RA_vY", "RA_wZ"]].copy()
         
-        transAngles = pd.DataFrame(columns = ["Theta_X", "Theta_Y"],
+        rot_angles = pd.DataFrame(columns = ["Theta_X", "Theta_Y"],
                                    dtype = "float")
         
         for tp in df["TP"].unique().tolist() :
-            data = newRA.loc[tp]
             
-            coord = [data["RA_uX"],
-                     data["RA_vY"],
-                     data["RA_wZ"]]
+            coord = data.loc[tp, ["RA_uX", "RA_vY", "RA_wZ"]].tolist()
             
             theta_x = abs(np.arctan2(coord[1], coord[2]))%np.pi
-            transAngles.loc[tp, "Theta_X"] = theta_x
+            rot_angles.loc[tp, "Theta_X"] = theta_x
             
             # Applying X rotation
-            ycoord = coord[1].copy()
+            ycoord = coord[1]
             coord[1] = coord[1]*np.cos(theta_x)-coord[2]*np.sin(theta_x)
             coord[2] = ycoord*np.sin(theta_x)+coord[2]*np.cos(theta_x)
             
             theta_y = abs(np.arctan2(-coord[0], coord[2]))%np.pi
-            transAngles.loc[tp, "Theta_Y"] = theta_y
+            rot_angles.loc[tp, "Theta_Y"] = theta_y
             
             # Applying Y rotation
-            xcoord = coord[0].copy()
+            xcoord = coord[0]
             coord[0] = coord[0]*np.cos(theta_y)+coord[2]*np.sin(theta_y)
             coord[2] = -xcoord*np.sin(theta_y)+coord[2]*np.cos(theta_y)
             
@@ -426,31 +416,29 @@ class compute():
         
         for ID in newCoords.index :
             
-            coord = [newCoords.loc[ID, "X"],
-                     newCoords.loc[ID, "Y"],
-                     newCoords.loc[ID, "Z"]]
+            coord = newCoords.loc[ID, ["X", "Y", "Z"]].tolist()
             
             tp = df.loc[ID, "TP"]
             
-            theta_x = transAngles.loc[tp, "Theta_X"]
+            theta_x = rot_angles.loc[tp, "Theta_X"]
             
-            ycoord = coord[1].copy()
+            ycoord = coord[1]
             coord[1] = coord[1]*np.cos(theta_x)-coord[2]*np.sin(theta_x)
             coord[2] = ycoord*np.sin(theta_x)+coord[2]*np.cos(theta_x)
             
-            theta_y = transAngles.loc[tp, "Theta_Y"]
+            theta_y = rot_angles.loc[tp, "Theta_Y"]
             
-            xcoord = coord[0].copy()
+            xcoord = coord[0]
             coord[0] = coord[0]*np.cos(theta_y)+coord[2]*np.sin(theta_y)
             coord[2] = -xcoord*np.sin(theta_y)+coord[2]*np.cos(theta_y)
             
             newCoords.loc[ID] = coord
         
         newCoords.columns = ["Aligned_X", "Aligned_Y", "Aligned_Z"]
-        
+
         if inplace :
             return (pd.concat([df, newCoords], axis = 1), 
-                    pd.concat([data, newRA], axis = 1))
+                    pd.concat([data, newRA, rot_angles], axis = 1))
         
         else :
             return newCoords, newRA
@@ -502,8 +490,8 @@ class compute():
         velocityByCell.drop(columns = "TP", inplace = True)
         
         if inplace :
-            return pd.concat([data, velocityByTP], axis = 1),\
-                    pd.concat([df, velocityByCell], axis = 1)
+            return (pd.concat([df, velocityByCell], axis = 1),
+                    pd.concat([data, velocityByTP], axis = 1))
         
         else :
             return velocityByTP, velocityByCell

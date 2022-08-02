@@ -9,6 +9,11 @@ Vector based analyzing components of OAT.
 import os
 import pandas as pd
 import time
+
+import matplotlib.pyplot as plt 
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.lines import Line2D
+
 from modules.utils.filemanager import *
 from modules.utils.clustering import *
 from modules.utils.compute import *
@@ -96,7 +101,7 @@ class vectors():
         
         return tracks
     
-    def full_analysis(dirpath, rescaling = [1, 1, 1]):
+    def full_analysis(dirpath, rescaling = [1, 1, 1], filtering = False):
         
         start_time = time.time()
         
@@ -108,8 +113,8 @@ class vectors():
         
         ## Computing vectors.
         step_time = time.time()
-        print("Computing vectors ...", end = " ")
-        df = compute.vectors(df)
+        print("Computing displacement vectors ...", end = " ")
+        df = compute.vectors(df, filtering = filtering)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
         ## Translating coords to the center ([0, 0, 0])
@@ -132,20 +137,20 @@ class vectors():
         
         ## Preparing the dataframe to compute the aligned vectors.
         aligned_df = df.loc[:,["TRACK_ID", "Aligned_X", "Aligned_Y", 
-                               "Aligned_Z", "TARGET"]].copy()
+                                "Aligned_Z", "TARGET"]].copy()
         aligned_df.rename(columns = {"Aligned_X": "X", 
-                                     "Aligned_Y": "Y",
-                                     "Aligned_Z": "Z"}, 
+                                      "Aligned_Y": "Y",
+                                      "Aligned_Z": "Z"}, 
                           inplace = True)
         
         ## Computing aligned displacements vectors.
         step_time = time.time()
-        print("Computing aligned vectors ...", end = " ")
+        print("Computing aligned displacement vectors ...", end = " ")
         aligned_vectors = compute.vectors(aligned_df, inplace = False)
         aligned_vectors.rename(columns = {"uX": "Aligned_uX",
                                           "vY": "Aligned_vY",
                                           "wZ": "Aligned_wZ"},
-                               inplace = True)
+                                inplace = True)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
         ## Merging results.
@@ -162,6 +167,105 @@ class vectors():
         
         ## Returning datasets.
         return df, data
+    
+    def show_vectors(df, TP, data = None, dim = "xyz", 
+                     show = True, savepath = None,
+                     show_centroid = True, color_clusters = True, 
+                     show_rot_axis = True):
+        
+        ## Setting which time points to display.
+        if not isinstance(TP, int) :
+            raise TypeError("TP must be int")
+            
+        ## Creating the figure.
+        fig = plt.figure(figsize=(10, 7), dpi = 400)
+        plt.style.use("seaborn-paper")
+        
+        ## Set global font
+        plt.rcParams.update({'font.family':'Montserrat'})
+        
+        legend = []
+        
+        subdf = df[df["TP"] == TP].copy()
+        
+        ## Setting the projection if 3D figure.
+        if len(dim) < 3 :
+            ax = fig.add_subplot(111)
+        else :
+            ax = fig.add_subplot(111, projection = "3d")
+        
+        ## Getting the order of axis wanted and in upper case.
+        axis_order = [axis.upper() for axis in list(dim)]
+        
+        ## Getting the vectors axis in the same order and adding them to the
+        ## axis_order list.
+        rel_vect_axis = {"X": "uX", "Y": "vY", "Z": "wZ"}
+        quiver_col = axis_order + [rel_vect_axis[axis] for axis in axis_order]
+        
+        if color_clusters and "F_SELECT" in subdf.columns :
+            t_df = subdf[subdf["F_SELECT"]]
+            f_df = subdf[subdf["F_SELECT"] == False]
+            
+            ax.quiver(t_df[quiver_col[0]], t_df[quiver_col[1]], 
+                      t_df[quiver_col[2]], t_df[quiver_col[3]], 
+                      t_df[quiver_col[4]], t_df[quiver_col[5]],
+                      color = "green")
+            ax.quiver(f_df[quiver_col[0]], f_df[quiver_col[1]], 
+                      f_df[quiver_col[2]], f_df[quiver_col[3]], 
+                      f_df[quiver_col[4]], f_df[quiver_col[5]],
+                      color = "orange")
+            
+            legend.append(Line2D([0], [0], marker = ('>'), 
+                                 color = "green", 
+                                 label = 'Selected vectors',
+                                 markerfacecolor = "green", 
+                                 markersize=7, ls = ''))
+            
+        else :
+            ax.quiver(subdf[quiver_col[0]], subdf[quiver_col[1]], 
+                      subdf[quiver_col[2]], subdf[quiver_col[3]], 
+                      subdf[quiver_col[4]], subdf[quiver_col[5]],
+                      color = "black")
+        
+        ## Showing raw centroid and more if available/wanted.
+        if show_centroid :
+            if color_clusters and "F_SELECT" in subdf.columns :
+                cx, cy, cz = tools.get_centroid(subdf[subdf["F_SELECT"]])
+                
+                ax.scatter(cx, cy, cz, c="navy", marker = "^", s = 50)
+                
+                ## Adding the legend.
+                legend.append(Line2D([0], [0], marker = '^', 
+                                     color = "navy", 
+                                     label = "Cluster's centroid",
+                                     markerfacecolor = "navy", 
+                                     markersize=7, ls = ''))
+            
+            ## Showing raw centroid.
+            cx, cy, cz = tools.get_centroid(subdf)
+            label_name = "Raw centroid"
+                
+            ax.scatter(cx, cy, cz, c="red", marker = "^", s = 50)
+            
+            legend.append(Line2D([0], [0], marker = '^', 
+                                 color = "red", 
+                                 label = label_name,
+                                 markerfacecolor = "red", 
+                                 markersize=7, ls = ''))
+        
+        if show_rot_axis :
+            pass
+        
+        ax.set_title("Displacement vectors for time point "+str(TP), 
+                     fontsize = 15)
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        
+        ax.legend(handles = legend, loc = 'best')
+        
+        plt.show()
+        
 
         
         

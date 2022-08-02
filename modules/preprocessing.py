@@ -260,7 +260,7 @@ class preprocessing():
         
         return df
         
-    def show_spots(df, TP, show = True, save = False, savepath = None,
+    def show_spots(df, TP, show = True, savepath = None,
                    show_centroids = True, color_clusters = True):
         """
         Create a figure showing spots for a given time point.
@@ -313,8 +313,7 @@ class preprocessing():
                                  color = "green", 
                                  label = 'Selected spots',
                                  markerfacecolor = "green", 
-                                 markersize=7, ls = ''))
-            
+                                 markersize=7, ls = ''))   
             
         else :
             ax.scatter(subdf["X"], subdf["Y"], subdf["Z"], c = "skyblue")
@@ -339,7 +338,7 @@ class preprocessing():
         if show :
             plt.show()
             
-        if save and savepath is not None :
+        if savepath is not None :
             plt.savefig(savepath, dpi = 400)
             
         plt.close()
