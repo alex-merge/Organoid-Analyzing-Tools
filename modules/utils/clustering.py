@@ -7,13 +7,16 @@ Clustering methods for OAT.
 """
 
 import pandas as pd
+import numpy as np
 import re
+
 from sklearn.cluster import DBSCAN
 from modules.utils.tools import tools
 
 class clustering():
     
-    def select_cluster(subdf, center, column, min_cells = 10):
+    def select_cluster(subdf, center, clust_column, coord_column, 
+                       min_cells = 10):
         """
         Search for the cluster that is the most likely of being the
         organoid cluster.
@@ -31,9 +34,9 @@ class clustering():
         subdf : pd.DataFrame
             Dataframe that contains spots coordinates as well as clustering
             results.
-        center : list 
+        center : np.array 
             Center coordinates of the whole volume as follow [X, Y, Z].
-        column : str
+        clust_column : str
             Name of the column that contains cluster IDs.
         min_cells : int, optional
             Number of spots a cluster must have to be selected. The default is
@@ -48,7 +51,7 @@ class clustering():
         """
         # Retrieving the ID of the clusters as well as the number of spots they
         # contains.
-        clustersInfo = subdf[column].value_counts()
+        clustersInfo = subdf[clust_column].value_counts()
         clustersID = clustersInfo.index
         
         # Creating a Series to store the distances between the centroid and the
@@ -57,9 +60,10 @@ class clustering():
         
         # Computing the distance for each clusters.
         for ID in clustersID :
-            centroid = tools.get_centroid(subdf[subdf[column] == ID])
-            distance = tools.euclid_distance(centroid, center)
-            dist.loc[ID] = distance
+            centroid = tools.get_centroid(subdf[subdf[clust_column] == ID],
+                                          coord_column)
+            
+            dist.loc[ID] = np.linalg.norm(centroid-center)
         
         # Sorting from the lowest to the greatest distance.
         dist.sort_values(ascending = True, inplace = True)
@@ -74,9 +78,9 @@ class clustering():
                 break
         
         # Returning the selection result as a pd.Series
-        return subdf[column] == selectedClusterID      
+        return subdf[clust_column] == selectedClusterID      
     
-    def clustering_core(df, center, cIter = 100, cSample = 10, 
+    def clustering_core(df, center, coord_column, cIter = 100, cSample = 10, 
                          eps = 40, min_samples = 3, min_cells = 10):
         """
         Cluster and select the spots that are more likely to be part of the
@@ -100,7 +104,7 @@ class clustering():
         ----------
         df : pd.DataFrame
             Spots to cluster. Same formatting as self.spots expected.
-        center : list 
+        center : array 
             Center coordinates of the whole volume as follow [X, Y, Z].
         cIter :  int, optional
             cIter number for the centroid location. The default is 100.
@@ -124,22 +128,21 @@ class clustering():
                 F_SELECT : Selected spots for the second clustering (bool).
     
         """
-        # Getting the centroid.
-        centroids = [tools.get_centroid(df.sample(cSample, axis=0)) \
-                     for k in range(cIter)]
-        centroids = pd.DataFrame(centroids, columns=["X", "Y", "Z"])
-        centroid = [centroids["X"].median(), 
-                    centroids["Y"].median(),
-                    centroids["Z"].median()]
+        ## Computing cIter centroids based on subsamples of the main df.
+        centroids = np.array([tools.get_centroid(df.sample(cSample, axis=0), 
+                                        coord_column)
+                              for k in range(cIter)])
         
-        # Computing the distance between each point and the centroid.
-        distance = pd.Series(dtype = "float", name = "DISTANCE")
-        for points in df.index:
-            distance[points] = tools.euclid_distance(
-                list(df.loc[points, ["X", "Y", "Z"]]), 
-                centroid)
+        ## Getting the median centroid.
+        centroid = np.array([np.median(centroids[:, k]) 
+                             for k in range(centroids.shape[1])])
         
-        # Clustering the distances and saving it as a pd.Series.
+        ## Computing the distance between each point and the centroid.
+        distance = pd.Series(dtype = "object", name = "DISTANCE")
+        for ID in df.index:
+            distance[ID] = np.linalg.norm(df.loc[ID, coord_column]-centroid)
+        
+        ## Clustering the distances and saving it as a pd.Series.
         cluster = DBSCAN(eps=5, min_samples=6).fit_predict(distance.to_frame())
         cluster = pd.Series(cluster, index = df.index, name = "A_CLUSTER")        
         
@@ -149,7 +152,9 @@ class clustering():
         # Selecting the cluster based on the clustering.selectCluster method.    
         selected = clustering.select_cluster(pd.concat([df, cluster], 
                                                        axis = 1),
-                                             center, column = "A_CLUSTER",
+                                             center, 
+                                             clust_column = "A_CLUSTER",
+                                             coord_column = coord_column,
                                              min_cells = min_cells)
         selected.name = "A_SELECT"
         
@@ -157,11 +162,13 @@ class clustering():
         Results = pd.concat([Results, selected], axis = 1)
         
         # Keeping the selected spots for the next clustering step.
-        subdf = df[selected].loc[:,["X", "Y", "Z"]]
+        subdf = df[selected].loc[:, "COORD"].copy()
+        arr = np.array(df[selected][coord_column].tolist())
         
         # Clustering the spots.
-        cluster = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(subdf)
-        cluster = pd.Series(cluster, index = subdf.index, name = "F_CLUSTER")
+        cluster = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(arr)
+        cluster = pd.Series(cluster, index = subdf.index, 
+                            name = "F_CLUSTER")
         
         # Merging the clusters ID to the Results dataframe. 
         Results = pd.concat([Results, cluster], axis = 1)
@@ -169,7 +176,9 @@ class clustering():
         # Selecting the right cluster once again using the same method.
         selected = clustering.select_cluster(pd.concat([subdf, cluster], 
                                                        axis = 1),
-                                             center, column = "F_CLUSTER", 
+                                             center, 
+                                             clust_column = "F_CLUSTER",
+                                             coord_column = "COORD",
                                              min_cells = min_cells)
         selected.name = "F_SELECT"
         
@@ -183,9 +192,9 @@ class clustering():
         
         return Results, distance, centroids
         
-    def compute_clusters(df, center, eps = 40, min_samples = 3, 
-                        cIter = 1000, cSample = 10, min_cells = 10, 
-                        rescaling = [1, 1, 1], inplace = True):
+    def compute_clusters(df, center, coord_column, eps = 40, min_samples = 3, 
+                         cIter = 1000, cSample = 10, min_cells = 10, 
+                         inplace = True):
         """
         Clustering the spots for each frame using the .clusteringEngine() 
         method.
@@ -223,15 +232,20 @@ class clustering():
         
         # Creating a dataframe to save the centroids coordinates that have been
         # computed (for debug reasons).
-        clustCent = pd.DataFrame(columns = ["X", "Y", "Z", "TP"], 
+        clustCent = pd.DataFrame(columns = ["COORD", "TP"], 
                                  dtype = "object")
         
         for tp in df["TP"].unique().tolist():
             subdf = df[df["TP"] == tp]
-            subdf = tools.reScaling(subdf, ratio = rescaling)
+            
             clusterResults, dist, cent = clustering.clustering_core(subdf, 
-                                         center, cIter, cSample, eps, 
+                                         center, coord_column,
+                                         cIter, cSample, eps, 
                                          min_samples, min_cells)
+            
+            cent = pd.Series([cent[i] for i in range(cent.shape[0])], 
+                             name = "CENTROIDS", dtype = "object")
+            cent = cent.to_frame()
             
             dist = dist.to_frame()
             dist.columns = ["Distance"]

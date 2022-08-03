@@ -63,8 +63,8 @@ class compute():
     
         return spotsLinks
     
-    def vectors(df, filtering = False, center = None, 
-                rescaling = [1, 1, 1], inplace = True):
+    def vectors(df, coord_column, filtering = False, center = None, 
+                inplace = True):
         """
         Compute displacement vectors for every spots in the tracks dataframe 
         and add them to it.
@@ -83,46 +83,26 @@ class compute():
         aligned : bool, optional
             If True, compute displacement vectors for all aligned coordinates.
             See self.alignRotAxis().
-        rescaling : list, optional
-            Scaling factor for the coordinates. List must be as follow :
-            [Xfactor, Yfactor, Zfactor].
     
         """
-        # Creating a dataframe to store vectors as they are computed.
-        # Each row is a vector with its index being the ID of its origin spot.
-        vectors = pd.DataFrame(columns = ["uX", "vY", "wZ"], 
-                               dtype = "float")
+        ## Creating a pd.Series to store vectors.
+        vectors = pd.Series(dtype = "object", name = "DISP_VECT")
+    
         
-        spotsLinks = compute.links(df)
-        
-        # Computing vectors, track by track.
-        for trackID in spotsLinks.index :
-            for spot in range(len(spotsLinks[trackID])-1) :
+        for ID in df.index :
+            try :
+                vectors[ID] = (df.loc[df.loc[ID, "TARGET"], coord_column]-
+                               df.loc[ID, coord_column])
+            except :
+                vectors[ID] = np.nan
                 
-                # Retrieving spot and target spot IDs.
-                spotID = spotsLinks[trackID][spot]
-                nextSpotID = spotsLinks[trackID][spot+1]
-
-                # Retrieving the spot and target spot coordinates                    
-                spotInfo = df.loc[spotID, ["X", "Y", "Z"]]
-                nextSpotInfo = df.loc[nextSpotID, ["X", "Y", "Z"]]
-
-                # Adding the computed vectors to the vectos dataframe.
-                vectors.loc[spotID] = tools.displacement_vector(spotInfo, 
-                                                                nextSpotInfo,
-                                                                toList = True)
-                
-            # Adding a null vector as the last spot don't have any vector.
-            vectors.loc[spotsLinks[trackID][-1]] = 3*[np.nan]
-            
-        ## Clustering and removing bad spots in df dataframe if it 
-        ## hasn't already been done.     
         if filtering :
             if center is None :
-                center = tools.get_centroid(df)
-            df = clustering.compute_clusters(df, center)
-            selected = df[df["F_SELECT"]].index
-            vectors = vectors.loc[selected]
+                center = tools.get_centroid(df, coord_column)
+            
+            df = clustering.compute_clusters(df, center, coord_column)
+            # selected = df[df["F_SELECT"]].index
+            # vectors = vectors.loc[selected]
         
         if inplace :
             return pd.concat([df, vectors], axis = 1)
@@ -130,66 +110,9 @@ class compute():
         else :
             return vectors
     
-    def voxels(df, filepath, offset = 10, outerThres = 0.9):
-        """
-        Compute voxels of cells. For each time point, the corresponding image
-        is loaded as an array. We get a threshold by getting the minimal pixel
-        value for the pixels that are at spots coordinates, for a given 
-        time point. 
-
-        Parameters
-        ----------
-        TP : int or list, optional
-            Time points to compute. The default is "all".
-        offset : int, optional
-            Added value to the min and max to make sure everything is inside. 
-            The default is 10.
-        outerThres : float, optional
-            Threshold determining that a pixels is inside the voxel and need to
-            be set to 0. Used to improve plotting speed. The default is 0.9.
-
-        """
-        # Opening the image.
-        image = io.imread(filepath)
-        
-        # Converting into a Numpy array. The shape is in this order : Z, Y, X.
-        imarray = np.array(image)
-        
-        # Getting the minimal value of pixels at spots coordinates.
-        df = df.astype("int")
-        values = imarray[df["Z"], df["Y"], df["X"]].tolist()
-        minimal = min(values)
-        
-        # Setting the outside as 0 and the inside as 1.
-        imarray[imarray < (minimal-offset)] = 0
-        imarray[imarray >= (minimal-offset)] = 1
-        
-        # Transposing the array that way it is oriented the same as the 
-        # other objects (spots, vectors).
-        imarray = np.transpose(imarray, (2, 1, 0))
-        
-        # Setting the inner pixels to 0 as well to only get the outer 
-        # shell.
-        toChange = []
-        for x in range(1, imarray.shape[0]-1):
-            for y in range(1, imarray.shape[1]-1):
-                for z in range(1, imarray.shape[2]-1):
-                    
-                    # Getting the 3*3 square array centered on (x,y,z). 
-                    neighbors = imarray[x-1:x+2, y-1:y+2, z-1:z+2]
-                    
-                    # Summing the values and if the number of ones is 
-                    # greater than the threshold, saving the pixel coord.
-                    if neighbors.sum()/27 >= outerThres :
-                        toChange.append([x, y, z])
-        
-        # Setting the values of the selected pixels to 0.
-        for coord in toChange:
-            imarray[coord[0], coord[1], coord[2]] = 0
     
-        return imarray
     
-    def drift(df):
+    def drift(df, coord_column = "COORD"):
         """
         Compute the drift of the organoid between time points.
 
@@ -217,11 +140,11 @@ class compute():
             subdf = df[df["TP"] == tp]
 
             ## Getting the centroid.
-            raw_centroid[tp] = tools.get_centroid(subdf, asarray = True)
+            raw_centroid[tp] = tools.get_centroid(subdf, coord_column)
             
             try :
                 clust_centroid[tp] = tools.get_centroid(subdf[subdf["F_SELECT"]],
-                                                        asarray = True)
+                                                        coord_column)
             
             except :
                 pass
@@ -250,7 +173,7 @@ class compute():
                              axis = 1)
         return data
         
-    def volume(df):
+    def volume(df, coord_column = "COORD"):
         """
         Use the Convex Hull algorithm of scipy to get the cells that are 
         forming the outershell as well as the volume of the organoid. 
@@ -268,7 +191,7 @@ class compute():
             subdf = df[df["TP"] == tp]
             
             # Using the Convex Hull algorithm.
-            hull = ConvexHull(subdf.loc[:,["X", "Y", "Z"]])
+            hull = ConvexHull(np.array(subdf["COORD"].tolist()))
             
             # Saving the volume and the spots that are the outershell.
             volume.append(hull.volume) 
@@ -296,7 +219,8 @@ class compute():
         
         return data
         
-    def translation(df, inplace = True):
+    def translation(df, coord_column = "COORD",
+                    destination = [0, 0, 0], inplace = True):
         """
         Translate the coordinates of all points within df to get the
         centroid of the organoid at [0, 0, 0].
@@ -304,11 +228,11 @@ class compute():
 
         """
         # Setting the center coordinates.
-        center = pd.Series([0, 0, 0], index = ["X", "Y", "Z"])
+        center = np.array(destination)
         
         # Creating a DataFrame to store the translated coordinates.
-        coords = pd.DataFrame(columns = ["Trans_X", "Trans_Y", "Trans_Z"], 
-                              dtype = "float")
+        coords = pd.Series(name = "TRANS_COORD", 
+                           dtype = "object")
         
         # Iterating over time points.
         for tp in df["TP"].unique().tolist():
@@ -318,24 +242,17 @@ class compute():
             
             # Computing the centroid as well as the translation between the 
             # centroid and the center coordinates.
-            centroid = tools.get_centroid(subdf.loc[:,["X", "Y", "Z"]])
-            translation = tools.displacement_vector(center, centroid)
-            
-            # Creating a buffer list to store new coordinates.
-            new_coords = []
-            
-            # Iterating over spot IDs and computing the translated coordinates.
-            for spot in subdf.index:
-                new_coords.append([subdf.loc[spot, "X"]-translation["X"],
-                                  subdf.loc[spot, "Y"]-translation["Y"],
-                                  subdf.loc[spot, "Z"]-translation["Z"]])
+            centroid = tools.get_centroid(subdf, coord_column)
+            translation = center-centroid
+                
+            new_coords = [subdf.loc[ID, coord_column]+translation
+                           for ID in subdf.index]
             
             # Adding the translated coordinates to the DataFrame.
             coords = pd.concat([coords, 
-                                pd.DataFrame(new_coords, index = subdf.index, 
-                                             columns = ["Trans_X", "Trans_Y", 
-                                                        "Trans_Z"], 
-                                             dtype = "float")])
+                                pd.Series(new_coords, index = subdf.index, 
+                                             dtype = "object", 
+                                             name = "TRANS_COORD")], axis = 0)
         if inplace :
             return pd.concat([df, coords], axis = 1)
         
@@ -511,3 +428,62 @@ class compute():
         
         else :
             return velocityByTP, velocityByCell
+        
+    def voxels(df, filepath, offset = 10, outerThres = 0.9):
+        """
+        Compute voxels of cells. For each time point, the corresponding image
+        is loaded as an array. We get a threshold by getting the minimal pixel
+        value for the pixels that are at spots coordinates, for a given 
+        time point. 
+
+        Parameters
+        ----------
+        TP : int or list, optional
+            Time points to compute. The default is "all".
+        offset : int, optional
+            Added value to the min and max to make sure everything is inside. 
+            The default is 10.
+        outerThres : float, optional
+            Threshold determining that a pixels is inside the voxel and need to
+            be set to 0. Used to improve plotting speed. The default is 0.9.
+
+        """
+        # Opening the image.
+        image = io.imread(filepath)
+        
+        # Converting into a Numpy array. The shape is in this order : Z, Y, X.
+        imarray = np.array(image)
+        
+        # Getting the minimal value of pixels at spots coordinates.
+        df = df.astype("int")
+        values = imarray[df["Z"], df["Y"], df["X"]].tolist()
+        minimal = min(values)
+        
+        # Setting the outside as 0 and the inside as 1.
+        imarray[imarray < (minimal-offset)] = 0
+        imarray[imarray >= (minimal-offset)] = 1
+        
+        # Transposing the array that way it is oriented the same as the 
+        # other objects (spots, vectors).
+        imarray = np.transpose(imarray, (2, 1, 0))
+        
+        # Setting the inner pixels to 0 as well to only get the outer 
+        # shell.
+        toChange = []
+        for x in range(1, imarray.shape[0]-1):
+            for y in range(1, imarray.shape[1]-1):
+                for z in range(1, imarray.shape[2]-1):
+                    
+                    # Getting the 3*3 square array centered on (x,y,z). 
+                    neighbors = imarray[x-1:x+2, y-1:y+2, z-1:z+2]
+                    
+                    # Summing the values and if the number of ones is 
+                    # greater than the threshold, saving the pixel coord.
+                    if neighbors.sum()/27 >= outerThres :
+                        toChange.append([x, y, z])
+        
+        # Setting the values of the selected pixels to 0.
+        for coord in toChange:
+            imarray[coord[0], coord[1], coord[2]] = 0
+    
+        return imarray

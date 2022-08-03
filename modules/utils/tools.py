@@ -59,7 +59,7 @@ class tools():
         
         return out_df
     
-    def get_centroid(df, asarray = False):
+    def get_centroid(df, column):
         """
         Process the "euclid" centroid from a set of points. Get the centroid by
         getting the mean value on each axis.
@@ -67,21 +67,24 @@ class tools():
         Parameters
         ----------
         df : pd.DataFrame
-            Dataframe with the points and their coordinates.
+            Whole dataframe containing the given column.
+        column : str
+            columns containing coordinates arrays of the points.
     
         Returns
         -------
-        centroid : list
-            List that contains the coordinates of the computed centroid.
+        centroid : np.array
+            Array that contains the coordinates of the computed centroid.
     
         """
         centroid = []
-        for axis in ["X", "Y", "Z"]:
-            centroid.append(df[axis].mean())
         
-        if asarray :
-            return np.array(centroid)
-        return centroid
+        data = np.array(df[column].tolist())
+        
+        for axis in range(data.shape[1]):
+            centroid.append(data[:,axis].mean())
+        
+        return np.array(centroid)
     
     def cross_product(df):
         """
