@@ -63,8 +63,8 @@ class compute():
     
         return spotsLinks
     
-    def vectors(df, coord_column, filtering = False, center = None, 
-                inplace = True):
+    def vectors(df, coord_column = "COORD", vect_column = "DISP_VECT",
+                filtering = False, center = None, inplace = True):
         """
         Compute displacement vectors for every spots in the tracks dataframe 
         and add them to it.
@@ -86,7 +86,7 @@ class compute():
     
         """
         ## Creating a pd.Series to store vectors.
-        vectors = pd.Series(dtype = "object", name = "DISP_VECT")
+        vectors = pd.Series(dtype = "object", name = vect_column)
     
         
         for ID in df.index :
@@ -94,7 +94,7 @@ class compute():
                 vectors[ID] = (df.loc[df.loc[ID, "TARGET"], coord_column]-
                                df.loc[ID, coord_column])
             except :
-                vectors[ID] = np.nan
+                vectors[ID] = np.zeros(3)
                 
         if filtering :
             if center is None :
@@ -162,6 +162,8 @@ class compute():
                     drift_vector[tp-1] = raw_centroid[tp]-raw_centroid[tp-1]
                 
                 drift_distance[tp-1] = np.linalg.norm(drift_vector[tp-1])
+        
+        drift_distance = round(drift_distance, 2)
         
         try :
             data = pd.concat([raw_centroid, clust_centroid, drift_distance,
@@ -253,13 +255,14 @@ class compute():
                                 pd.Series(new_coords, index = subdf.index, 
                                              dtype = "object", 
                                              name = "TRANS_COORD")], axis = 0)
+            
         if inplace :
             return pd.concat([df, coords], axis = 1)
         
         else : 
             return coords
     
-    def rotation_axis(df):
+    def rotation_axis(df, vect_column = "DISP_VECT"):
         """
         Compute the rotation axis of the dataset, at each time point.
         Update data with the colinear vectors of the rotation axis.
@@ -270,37 +273,31 @@ class compute():
             
         # Creating a dataframe to store both vectors forming the PCA plane as
         # well as the crossproduct of those 2.
-        componentVectors = pd.DataFrame(columns = ["V1_uX", "V1_vY", "V1_wZ",
-                                                   "V2_uX", "V2_vY", "V2_wZ",
-                                                   "RA_uX", "RA_vY", "RA_wZ"], 
-                                        dtype = "float")
+        componentVectors = pd.DataFrame(columns = ["V1", "V2", "RA_VECT"], 
+                                        dtype = "object")
         
         # Iterating over time points.
         for tp in df["TP"].unique().tolist():
-            subdf = df[df["TP"] == tp].loc[:, ["uX", "vY", "wZ"]]
-            subdf = subdf.dropna()
+            subdf = df[df["TP"] == tp][vect_column]
+            subdf = subdf.drop(index = [k for k in subdf.index 
+                                if (subdf.loc[k] == np.zeros(3)).all()])
             
-            # Checking if the dataframe is empty meaning we can't compute the 
-            # axis.
+            ## Checking if the dataframe is not empty.
             if not subdf.empty:   
-            
+                
+                arr = np.array(subdf.tolist())
+                
                 pca = PCA(n_components = 2)
-                pca.fit(subdf.loc[:, ["uX", "vY", "wZ"]])
+                pca.fit(arr)
                 
                 V1 = pca.components_[0]
                 V2 = pca.components_[1]
                 
-                # Creating a temporary df for crossProduct().
-                tempDF = pd.DataFrame(pca.components_, 
-                                      columns = ["uX", "vY", "wZ"])
-                
                 # Computingthe crossproduct.
-                RA = list(tools.cross_product(tempDF))
+                RA = np.cross(V1, V2)
                 
                 # Saving coordinates to th dataframe.
-                componentVectors.loc[tp] = [V1[0], V1[1], V1[2], 
-                                            V2[0], V2[1], V2[2],
-                                            RA[0], RA[1], RA[2]]
+                componentVectors.loc[tp] = [V1, V2, RA]
         
         # Merging componentVectors with data.
         data = pd.concat([data, componentVectors], axis = 1)
@@ -315,108 +312,112 @@ class compute():
 
         """
 
-        newCoords = df[["Trans_X", "Trans_Y", "Trans_Z"]].copy()
-        newCoords.columns = ["X", "Y", "Z"]
+        newCoords = df.loc[:, "TRANS_COORD"].copy()
         
-        newRA = data[["RA_uX", "RA_vY", "RA_wZ"]].copy()
+        newRA = data.loc[:, "RA_VECT"].copy()
         
         rot_angles = pd.DataFrame(columns = ["Theta_X", "Theta_Y"],
                                    dtype = "float")
         
         for tp in df["TP"].unique().tolist() :
             
-            coord = data.loc[tp, ["RA_uX", "RA_vY", "RA_wZ"]].tolist()
+            coord = newRA.loc[tp]
+            
+            if not isinstance(coord, np.ndarray) and tp != 0:
+                coord = newRA.loc[tp-1]
             
             theta_x = abs(np.arctan2(coord[1], coord[2]))%np.pi
             rot_angles.loc[tp, "Theta_X"] = theta_x
             
             # Applying X rotation
-            ycoord = coord[1]
-            coord[1] = coord[1]*np.cos(theta_x)-coord[2]*np.sin(theta_x)
-            coord[2] = ycoord*np.sin(theta_x)+coord[2]*np.cos(theta_x)
+            rot_x = np.array([[1, 0, 0],
+                              [0, np.cos(theta_x), -np.sin(theta_x)],
+                              [0, np.sin(theta_x), np.cos(theta_x)]])
             
-            theta_y = abs(np.arctan2(-coord[0], coord[2]))%np.pi
+            coord = np.matmul(rot_x, coord)
+            
+            theta_y = abs(-np.arctan2(coord[0], coord[2]))%np.pi
             rot_angles.loc[tp, "Theta_Y"] = theta_y
             
             # Applying Y rotation
-            xcoord = coord[0]
-            coord[0] = coord[0]*np.cos(theta_y)+coord[2]*np.sin(theta_y)
-            coord[2] = -xcoord*np.sin(theta_y)+coord[2]*np.cos(theta_y)
+            rot_y = np.array([[np.cos(theta_y), 0, np.sin(theta_y)],
+                              [0, 1, 0],
+                              [-np.sin(theta_y), 0, np.cos(theta_y)]])
+            
+            coord = np.matmul(rot_y, coord)
             
             newRA.loc[tp] = coord
         
-        newRA.columns = ["Aligned_RA_uX", "Aligned_RA_vY", "Aligned_RA_wZ"]
+        newRA.name = "ALIGNED_RA_VECT"
         
         for ID in newCoords.index :
             
-            coord = newCoords.loc[ID, ["X", "Y", "Z"]].tolist()
+            coord = newCoords.loc[ID]
             
             tp = df.loc[ID, "TP"]
             
+            ## Rotation on the x axis
             theta_x = rot_angles.loc[tp, "Theta_X"]
             
-            ycoord = coord[1]
-            coord[1] = coord[1]*np.cos(theta_x)-coord[2]*np.sin(theta_x)
-            coord[2] = ycoord*np.sin(theta_x)+coord[2]*np.cos(theta_x)
+            rot_x = np.array([[1, 0, 0],
+                              [0, np.cos(theta_x), -np.sin(theta_x)],
+                              [0, np.sin(theta_x), np.cos(theta_x)]])
+            
+            coord = np.matmul(rot_x, coord)
             
             theta_y = rot_angles.loc[tp, "Theta_Y"]
             
-            xcoord = coord[0]
-            coord[0] = coord[0]*np.cos(theta_y)+coord[2]*np.sin(theta_y)
-            coord[2] = -xcoord*np.sin(theta_y)+coord[2]*np.cos(theta_y)
+            ## Rotation on the y axis
+            rot_y = np.array([[np.cos(theta_y), 0, np.sin(theta_y)],
+                              [0, 1, 0],
+                              [-np.sin(theta_y), 0, np.cos(theta_y)]])
+            
+            coord = np.matmul(rot_y, coord)
             
             newCoords.loc[ID] = coord
         
-        newCoords.columns = ["Aligned_X", "Aligned_Y", "Aligned_Z"]
+        newCoords.name = "ALIGNED_COORD"
 
         if inplace :
             return (pd.concat([df, newCoords], axis = 1), 
                     pd.concat([data, newRA, rot_angles], axis = 1))
         
         else :
-            return newCoords, newRA
+            return newCoords, pd.concat([newRA, rot_angles], axis = 1)
         
     def angular_velocity(df, data, inplace = True):
         
         subdf = df.copy()
         
-        angularVelocity = pd.Series(dtype = "float", name = "Angular_Velocity")
-        distance = pd.Series(dtype= "float", name = "Distance_rotAxis")
+        angular_velocity = pd.Series(dtype = "float", name = "ANG_VELOCITY")
+        distance = pd.Series(dtype= "float", name = "DISTANCE_TO_RA")
         
         for ID in subdf.index:
             
-            distance[ID] = tools.euclid_distance([0, 0], 
-                                          list(subdf.loc[ID, ["Aligned_X",
-                                                              "Aligned_Y"]]))
+            distance[ID] = np.linalg.norm(subdf.loc[ID, "ALIGNED_COORD"][:2])
             
-            RAvect = data.loc[subdf.loc[ID, "TP"], ["Aligned_RA_uX",
-                                                         "Aligned_RA_vY",
-                                                         "Aligned_RA_wZ"]]
-            RAvect.index = ["uX", "vY", "wZ"]
+            RA_vect = data.loc[subdf.loc[ID, "TP"], "ALIGNED_RA_VECT"]
             
-            dispVector = subdf.loc[ID, ["Aligned_uX", "Aligned_vY",
-                                        "Aligned_wZ"]]
+            disp_vector = subdf.loc[ID, "ALIGNED_COORD"]
             
-            dispVector.index = ["uX", "vY", "wZ"]
+            velocity = np.linalg.norm(np.cross(disp_vector, RA_vect))/(
+                distance[ID])
             
-            vectors = pd.concat([dispVector.to_frame().T, RAvect.to_frame().T])
-            
-            velocity = abs((tools.cross_product(vectors)**2).sum())**(1/2)/(
-                       distance[ID])
-            
-            angularVelocity[ID] = velocity
+            angular_velocity[ID] = velocity
         
-        velocityByCell = pd.concat([angularVelocity.to_frame(),
+        velocityByCell = pd.concat([angular_velocity.to_frame(),
                                     distance.to_frame(), df["TP"].to_frame()],
                                    axis = 1)
+        velocityByCell["ANG_VELOCITY"] = round(velocityByCell["ANG_VELOCITY"], 
+                                               3)
         
         velocityByTP = pd.DataFrame(columns = ["Mean_AV", "Std_AV"],
                               index = data.index, dtype = "float")
         
         for tp in velocityByTP.index:
             subdf = velocityByCell[velocityByCell["TP"] == tp].copy()
-            mean = subdf["Angular_Velocity"].mean()
-            std = subdf["Angular_Velocity"].std()
+            mean = subdf["ANG_VELOCITY"].mean()
+            std = subdf["ANG_VELOCITY"].std()
             
             velocityByTP.loc[tp] = [mean, std]
             

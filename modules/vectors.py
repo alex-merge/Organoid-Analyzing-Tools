@@ -13,6 +13,7 @@ import time
 import matplotlib.pyplot as plt 
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.lines import Line2D
+import seaborn as sns
 
 from modules.utils.filemanager import *
 from modules.utils.clustering import *
@@ -153,27 +154,14 @@ class vectors():
         df, data = compute.alignment(df, data)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
-        ## Preparing the dataframe to compute the aligned vectors.
-        aligned_df = df.loc[:,["TRACK_ID", "Aligned_X", "Aligned_Y", 
-                                "Aligned_Z", "TARGET"]].copy()
-        aligned_df.rename(columns = {"Aligned_X": "X", 
-                                      "Aligned_Y": "Y",
-                                      "Aligned_Z": "Z"}, 
-                          inplace = True)
-        
         ## Computing aligned displacements vectors.
         step_time = time.time()
         print("Computing aligned displacement vectors ...", end = " ")
-        aligned_vectors = compute.vectors(aligned_df, inplace = False)
-        aligned_vectors.rename(columns = {"uX": "Aligned_uX",
-                                          "vY": "Aligned_vY",
-                                          "wZ": "Aligned_wZ"},
-                                inplace = True)
+        df = compute.vectors(df, coord_column = "ALIGNED_COORD",
+                             vect_column = "ALIGNED_DISP_VECT")
+
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
-        
-        ## Merging results.
-        df = pd.concat([df, aligned_vectors], axis = 1)
-        
+
         ## Computing angular velocity.
         step_time = time.time()
         print("Computing angular velocity ...", end = " ")
@@ -186,7 +174,7 @@ class vectors():
         ## Returning datasets.
         return df, data
     
-    def show_vectors(df, TP, data = None, dim = "xyz", 
+    def show_vectors(df, TP, data = None, mode = "Default",
                      show = True, savepath = None,
                      show_centroid = True, color_clusters = True, 
                      show_rot_axis = True):
@@ -194,96 +182,175 @@ class vectors():
         ## Setting which time points to display.
         if not isinstance(TP, int) :
             raise TypeError("TP must be int")
+        
             
-        ## Creating the figure.
+        if mode == "Default":
+            coord_column = "COORD"
+            vect_column = "DISP_VECT"
+            RA_column = "RA_VECT"
+            
+        if mode == "Translated":
+            coord_column = "TRANS_COORD"
+            vect_column = "DISP_VECT"
+            RA_column = "RA_VECT"
+            
+        if mode == "Aligned":
+            coord_column = "ALIGNED_COORD"
+            vect_column = "ALIGNED_DISP_VECT"
+            RA_column = "ALIGNED_RA_VECT"
+        
+        ## Checking if we can actually show the clusters.
+        if color_clusters and "F_SELECT" not in df.columns:
+            color_clusters = False
+            
+        # ## Same with the centroids.
+        # if show_centroid and (data is None or "Raw_centroid" not in data.columns
+        #                       or (color_clusters and "Cluster_centroid" not
+        #                           in data.columns)):
+        #     show_centroid = False
+            
+        ## Same with the rotation axis.
+        if show_rot_axis and (data is None or RA_column not in data.columns):
+            show_rot_axis = False
+            
+        ## Creating the figure and setting global parameters.
         fig = plt.figure(figsize=(10, 7), dpi = 400)
         plt.style.use("seaborn-paper")
-        
-        ## Set global font
         plt.rcParams.update({'font.family':'Montserrat'})
         
         legend = []
         
         subdf = df[df["TP"] == TP].copy()
         
-        ## Setting the projection if 3D figure.
-        if len(dim) < 3 :
-            ax = fig.add_subplot(111)
-        else :
-            ax = fig.add_subplot(111, projection = "3d")
+        ax = fig.add_subplot(111, projection = "3d")
         
-        ## Getting the order of axis wanted and in upper case.
-        axis_order = [axis.upper() for axis in list(dim)]
-        
-        ## Getting the vectors axis in the same order and adding them to the
-        ## axis_order list.
-        rel_vect_axis = {"X": "uX", "Y": "vY", "Z": "wZ"}
-        quiver_col = axis_order + [rel_vect_axis[axis] for axis in axis_order]
-        
-        ## Coloring or not the vectors according to their cluster.
-        if color_clusters and "F_SELECT" in subdf.columns :
-
-            ax, new_legend = figures.add_3Dvectors(
-                ax, subdf[subdf["F_SELECT"]], quiver_col,
-                label = "Selected vectors", color = "green")
-            legend.append(new_legend)
+        ## Showing displacements vectors xith or without cluster coloration.
+        if color_clusters:
+            ax, nlegend = figures.add_3Dvectors(ax, subdf[subdf["F_SELECT"]],
+                                                coord_column, vect_column,
+                                                label = "Selected displacement vectors",
+                                                color = "green")
+            legend.append(nlegend)
             
-            ax, new_legend = figures.add_3Dvectors(
-                ax, subdf[subdf["F_SELECT"] == False], quiver_col,
-                label = "Unselected vectors", color = "orange")
-            legend.append(new_legend)
-        
+            ax, nlegend = figures.add_3Dvectors(ax, 
+                                                subdf[subdf["F_SELECT"] == False],
+                                                coord_column, vect_column,
+                                                label = "Unselected displacement vectors",
+                                                color = "orange")
+            legend.append(nlegend)
+            
         else :
-            ax = figures.add_3Dvectors(ax, subdf, quiver_col)
-        
-        ## Showing raw centroid and more if available/wanted.
+            ax, nlegend = figures.add_3Dvectors(ax, subdf, coord_column,
+                                                vect_column, 
+                                                label = "Displacement vectors")
+            legend.append(nlegend)
+            
+        ## Showing centroid
         if show_centroid :
+            if color_clusters:
+                ax, nlegend = figures.add_spots(ax, subdf[subdf["F_SELECT"]], 
+                                                coord_column, 
+                                                label = "Cluster centroid")
+                legend.append(nlegend)
             
-            ax, new_legend = figures.add_spots(ax, subdf, label = "Raw centroid",
-                                               marker = "^", color = "red") 
+            ax, nlegend = figures.add_spots(ax, subdf, 
+                                            coord_column, 
+                                            label = "Raw centroid", 
+                                            color = "red")
+            legend.append(nlegend)
             
-            if color_clusters and "F_SELECT" in subdf.columns :
-
-                ax, new_legend = figures.add_spots(
-                    ax, subdf[subdf["F_SELECT"]], label = "Cluster's centroid", 
-                    marker = "^", color = "navy") 
+        ## Showing rotation axis.
+        if show_rot_axis:
+            if color_clusters:
+                centroid = tools.get_centroid(subdf[subdf["F_SELECT"]], 
+                                              coord_column)
+            else:
+                centroid = tools.get_centroid(subdf, coord_column)
+                
+            RA_vect = data.loc[TP, RA_column]/np.linalg.norm(
+                                                data.loc[TP, RA_column])
+            
+            ax.quiver(centroid[0], centroid[1], centroid[2],
+                      RA_vect[0], RA_vect[1], RA_vect[2],
+                      color = "dodgerblue", length = 20)
+            ax.quiver(centroid[0], centroid[1], centroid[2],
+                      -RA_vect[0], -RA_vect[1], -RA_vect[2],
+                      color = "dodgerblue", length = 20)
+            
+            legend.append(Line2D([0], [0], marker = "", color = "dodgerblue", 
+                                 label = "Rotation Axis", 
+                                 markerfacecolor = "dodgerblue", 
+                                 markersize = 7))
         
-        if show_rot_axis and data is not None and "radius" in data.columns :
-            
-            RA_vect = data.loc[TP, ["RA_uX", "RA_vY", "RA_wZ"]].tolist()
-            
-            if color_clusters and "F_SELECT" in subdf.columns :
-                cx, cy, cz = tools.get_centroid(subdf[subdf["F_SELECT"]])
-            
-            else :
-                cx, cy, cz = tools.get_centroid(subdf)
-                
-            vect_scale = ((0.5*data.loc[TP, "radius"])/
-                          (tools.euclid_distance(RA_vect, [0, 0, 0])))
-            
-            ax.quiver(cx, cy, cz, RA_vect[0], RA_vect[1], RA_vect[2], 
-                      color = "orange", length = vect_scale)
-            ax.quiver(cx, cy, cz, -RA_vect[0], -RA_vect[1], -RA_vect[2], 
-                      color = "orange", length = vect_scale)
-            
-            legend.append(Line2D([0], [0], marker = ('>'), 
-                                 color = "orange", 
-                                 label = 'Rotation axis',
-                                 markerfacecolor = "orange", 
-                                 markersize=7, ls = ''))
+        ax.legend(handles = legend, loc = 'best')
         
-                
-            
-                
-                
         ax.set_title("Displacement vectors for time point "+str(TP), 
                      fontsize = 15)
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_zlabel('z')
         
-        ax.legend(handles = legend, loc = 'best')
-        
         plt.show()
+        plt.close()
+
         
+    def show_angular_velocity(df, data, show = True, savepath = None):
+        
+        if not set(["Mean_AV", "Std_AV", "volume", "Drift_distance"]).issubset(
+                set(data.columns)) or not "ALIGNED_COORD" in df.columns:
+            raise KeyError("Missing informations to proceed")
+            
+        fig, axs = plt.subplots(2, 2, figsize = (16, 9), dpi = 400)
+        
+        ## Plotting AV over time.
+        sns.lineplot(ax = axs[0, 0], data = df, x = "TP", y = "ANG_VELOCITY",
+                     ci='sd', err_style='bars', marker = "o")
+        sns.despine()
+        axs[0, 0].set(xlabel = 'Time point', ylabel = 'Angular velocity',
+                      title = "Cell angular velocity over time")
+        
+        ## Plotting volume over time.
+        sns.lineplot(ax = axs[1, 0], x = data.index, y = data["volume"], 
+                     marker = "o")
+        sns.despine()
+        axs[1, 0].set(xlabel = 'Time point', ylabel = 'Volume (px³)',
+                      title = 'Organoïd volume over time')
+        
+        ## Plotting angular velocity over distance to rotation axis.
+        distance = [np.linalg.norm(arr[:2]) for arr in df["ALIGNED_COORD"]]
+        hue = (df["ANG_VELOCITY"]/(df["ANG_VELOCITY"].mean()))
+        hue.name = 'Relative to the average angular velocity'
+        
+        sns.scatterplot(ax = axs[0, 1], x = distance, y = df["ANG_VELOCITY"],
+                        hue = hue)
+        sns.despine()
+        axs[0, 1].set(xlabel = 'Distance to rotation axis (px)', 
+                      ylabel = 'Angular velocity',
+                      title = 'Angular velocity relative to the distance from the rotation axis')
+        
+        ## Plotting drift over time.
+        y_pt = [data.iloc[:k+1]["Drift_distance"].sum() for k in data.index]
+        
+        sns.lineplot(ax = axs[1, 1], x = data.index, y = y_pt, marker = "o")
+        sns.despine()
+        axs[1, 1].set(xlabel = 'Time point', ylabel = 'Travelled distance (px)',
+                      title = 'Sum of the travelled distance over time')
+        
+        if savepath is not None:
+            plt.savefig(savepath)
+        
+        if show:
+            plt.show()
+
+        plt.close()
+        
+        # ## Plotting mean velocity for each point.
+        # subdf = df.loc[[k for k in df.index 
+        #                if df.loc[k, "ALIGNED_COORD"][-1] >= 0]]
+        # x_pt = np.array(subdf["ALIGNED_COORD"].tolist())[:, 0]
+        # y_pt = np.array(subdf["ALIGNED_COORD"].tolist())[:, 1]
+        
+        # sns.scatterplot(ax = axs[0, 1], x = x_pt, y = y_pt, 
+        #                 hue = subdf["ANG_VELOCITY"])
+        # axs[0, 1].set(xlabel = 'x', ylabel = 'y')
         

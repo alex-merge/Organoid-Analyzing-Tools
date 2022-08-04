@@ -15,10 +15,10 @@ from modules.utils.tools import *
 
 class figures():
     
-    def add_spots(ax, df, label = None, marker = "o", color = "navy", 
-                     size = 50):
+    def add_spots(ax, df, coord_column = "COORD", label = None, marker = "o", 
+                  color = "navy", size = 50):
         
-        cx, cy, cz = tools.get_centroid(df)
+        cx, cy, cz = tools.get_centroid(df, coord_column)
         
         ax.scatter(cx, cy, cz, c = color, marker = marker, s = size)
         
@@ -31,27 +31,30 @@ class figures():
         
         return ax
     
-    def add_3Dvectors(ax, df, col_name, label = None, marker = ">", 
+    def add_3Dvectors(ax, df, coord_column = "COORD", 
+                      vect_column = "DISP_VECT", label = None, marker = ">", 
                     color = "black", length = None):
         
+        coords = np.array(df[coord_column].tolist())
+        vectors = np.array(df[vect_column].tolist())
+        
         if length is not None :
-            ax.quiver(df[col_name[0]].to_numpy(), df[col_name[1]].to_numpy(),
-                      df[col_name[2]].to_numpy(), df[col_name[3]].to_numpy(),
-                      df[col_name[4]].to_numpy(), df[col_name[5]].to_numpy(),
+            ax.quiver(coords[:, 0], coords[:, 1], coords[:, 2],
+                      vectors[:, 0], vectors[:, 1], vectors[:, 2],
                       color = color, length = length)
         
         else :
-            ax.quiver(df[col_name[0]].to_numpy(), df[col_name[1]].to_numpy(),
-                      df[col_name[2]].to_numpy(), df[col_name[3]].to_numpy(),
-                      df[col_name[4]].to_numpy(), df[col_name[5]].to_numpy(),
+            ax.quiver(coords[:, 0], coords[:, 1], coords[:, 2],
+                      vectors[:, 0], vectors[:, 1], vectors[:, 2],
                       color = color)
             
         if label is not None :
             legend = Line2D([0], [0], marker = marker, color = color, 
                                  label = label, markerfacecolor = color, 
                                  markersize = 7, ls = '')
-            
-        return ax, legend
+            return ax, legend
+        
+        return ax
     
         
         
