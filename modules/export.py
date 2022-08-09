@@ -11,11 +11,13 @@ from scipy.io import savemat
 import re
 import pandas as pd
 
+from modules.utils.filemanager import filemanager
+
 class export():
     
-    def toCSV(df, savepath):
+    def to_csv(df, savepath):
         """
-        Save the given dataframe as a .csv at the given path.
+        Save the given dataframe as a .csv, at the given path.
 
         Parameters
         ----------
@@ -25,27 +27,45 @@ class export():
             Full path of the output file.
 
         """
-        df.to_csv(savepath)
+        outdf = df.copy()
+        
+        ## Getting names from the column containing arrays.
+        is_array = [name for name in outdf.columns 
+                    if isinstance(outdf[name][0], np.ndarray)]
+        
+        ## For each one, splitting the array into 3 columns 
+        ## (one for each axis).
+        for column in is_array:
+            value_list = outdf[column].to_numpy()
+            
+            ## Replacing nan values with array([0, 0, 0]).
+            for k in range(len(value_list)):
+                if not isinstance(value_list[k], np.ndarray):
+                    value_list[k] = np.array([np.nan]*3)
+                    
+            outdf[column] = value_list
+            
+            ## creating an array and the a dataframe out of the column.
+            arr = np.array(outdf[column].tolist())
+            splitted_values = pd.DataFrame(arr, index = outdf.index, 
+                                           columns = [column+"_"+axis 
+                                                      for axis in list("XYZ")],
+                                           dtype = "float"
+                                           )
+            
+            ## Merging the new dataframe and removing the old column.
+            outdf = pd.concat([outdf, splitted_values], axis = 1)
+            outdf.drop(columns = column, inplace = True)
+        
+        ## Saving the .csv at the given path.
+        outdf.to_csv(savepath)
     
-    def toMatLab(df, savepath):
-        maxLength = max([df[df["TP"] == tp].shape[0] 
-                         for tp in df["TP"].unique().tolist()])
-        for tp in df["TP"].unique().tolist():
-            data = df[df["TP"] == tp]
-            data = data.loc[:, ["Aligned_X", "Aligned_Y", "Aligned_Z"]]
-            dic = {}
-            for col in data.columns:
-                values = np.concatenate(( data[col].to_numpy(), 
-                                          np.zeros((maxLength-data.shape[0])) 
-                                         ))
-                dic[re.split("_", col)[-1]] = values
-            savemat(savepath, dic)
-    
-    def toVTKpolydata(df, TP, savepath, organoid = False):
-    #def exportSpotsVTK(self, filename, , df = "spots"):
+    def to_vtk_polydata(df, savepath, column_name = "COORD",
+                        TP = None, clusters_only = False):
         """
-        Export the given files to a points type .vtk for visualization in 
-        paraview.
+        Export the given coord column in the given dataframe 
+        to a points type .vtk for visualization in paraview.
+        Create trajectories for each tracks available.
 
         Parameters
         ----------
@@ -58,82 +78,90 @@ class export():
             organoid.        
 
         """
-        # Exporting all spots, frame by frame, by calling back the method.
-        if TP == "all":
-            for tp in df["TP"].unique().tolist():
-                export.toVTKpolydata(df, tp, organoid)
-        
-        #Exporting the spots from the given frames, by calling back the method.
-        elif type(TP) == list:
-            for tp in TP:
-                export.toVTKpolydata(df, tp, organoid)
-        
-        # Actual export of the spots for the given file.
-        elif type(TP) == int:
-
-            subdf = df[df["TP"] == tp]
+        subdf = df.copy()
                 
-            # Selecting spots if available and if the user wants it.
-            if "F_SELECT" in subdf.columns and organoid:
-                subdf = subdf[subdf["IS_ORGANOID"]]
+        ## Selecting spots if available and if the user wants it.
+        if clusters_only and "F_SELECT" in subdf.columns :
+            subdf = subdf[subdf["IS_ORGANOID"]]
+                 
+        ## Removing columns (tracks) containing nan values.
+        subdf.dropna(axis = "columns", inplace = True)
+        
+        ## Getting the number of columns i.e. the number of different tracks.
+        Tracks = subdf["TRACK_ID"].unique()
+        
+        ## Getting the number of points per tracks.
+        TP = subdf["TP"].unique()
+        
+        x_df = pd.DataFrame(dtype = "float", columns = Tracks, index = TP)
+        y_df = pd.DataFrame(dtype = "float", columns = Tracks, index = TP)
+        z_df = pd.DataFrame(dtype = "float", columns = Tracks, index = TP)
+        
+        for tp in TP:
+            for track in Tracks:
+                subset = subdf[subdf["TP"] == tp]
+                subset = subset[subset["TRACK_ID"] == track]
                 
-        """
-        Writer to convert a series of coordinates into a polydata .vtk file.
-
-        """
-
-        file = open(savepath, "w")
-        
-        # Removing columns (tracks) containing nan values.
-        subdf['X'].dropna(axis = "columns", inplace = True)
-        subdf['Y'].dropna(axis = "columns", inplace = True)
-        subdf['Z'].dropna(axis = "columns", inplace = True)
-        
-        #Getting the number of columns i.e. the number of different tracks.
-        points_nb = len(subdf['X'].columns)
-        
-        #Getting the number of points per tracks.
-        tp_nb = len(subdf['X'].index)
-        
-        #Writing the file specifications
-        file.write("# vtk DataFile Version 2.0\n")
-        file.write("PIV3D Trajectories\n")
-        file.write("ASCII\n")
-        file.write("DATASET POLYDATA\n")
-        file.write("POINTS "+str(points_nb*tp_nb)+" double\n")
-        
-        #For every tracks and every timepoint (row), we write the coordinates 
-        #of the given point in the file.
-        for pt in range(points_nb):
-            for tp in range(tp_nb):
-                X = subdf['X'].iloc[tp, pt] 
-                Y = subdf['Y'].iloc[tp, pt]                                
-                Z = subdf['Z'].iloc[tp, pt]
-                file.write(str(X)+" "+str(Y)+" "+str(Z)+"\n")
+                if not subset.empty:
+                    x_df.loc[tp, track] = subset[column_name][0][0]
+                    y_df.loc[tp, track] = subset[column_name][0][1]
+                    z_df.loc[tp, track] = subset[column_name][0][2]
                     
-        #Writing the number of lines and the number of points.
-        file.write("LINES "+str(points_nb)+" "+str((tp_nb+1)*points_nb)+"\n" )
-        file.write("\n")
-        
-        #Writing some more informations
-        idx = 0;
-        for pt in range(points_nb):
-            file.write(str(tp_nb)+" \n")
-            for tp in range(tp_nb):
-                file.write(str(idx)+" \n")
-                idx += 1
-            file.write("\n")
-
-        file.write("POINT_DATA "+str(points_nb*tp_nb)+"\n")
-        file.write("SCALARS index int 1\n")
-        file.write("LOOKUP_TABLE default\n")
-        file.write("\n")
-        for pt in range(points_nb):
-             for tp in range(tp_nb):
-                file.write(str(tp)+" \n")
+                else :
+                    x_df.loc[tp, track] = np.nan
+                    y_df.loc[tp, track] = np.nan
+                    z_df.loc[tp, track] = np.nan
+                    
+        x_df.fillna(method = "ffill", inplace = True)
+        x_df.fillna(method = "bfill", inplace = True)
+        y_df.fillna(method = "ffill", inplace = True)
+        y_df.fillna(method = "bfill", inplace = True)
+        z_df.fillna(method = "ffill", inplace = True)
+        z_df.fillna(method = "bfill", inplace = True)        
                 
-        #Closing the file and saving it.        
-        file.close()
+        stream = open(savepath, "w")
+        
+        ## Writing the file specifications
+        stream.write("# vtk DataFile Version 2.0\n")
+        stream.write("PIV3D Trajectories\n")
+        stream.write("ASCII\n")
+        stream.write("DATASET POLYDATA\n")
+        stream.write("POINTS "+str(len(Tracks)*len(TP))+" double\n")
+        
+        ## For every tracks and every timepoint (row), we write the coordinates 
+        ## of the given point in the file.
+        for pt in Tracks:
+            for tp in TP:
+                X = x_df.loc[tp, pt] 
+                Y = y_df.loc[tp, pt]                                
+                Z = z_df.loc[tp, pt]
+                stream.write(str(X)+" "+str(Y)+" "+str(Z)+"\n")
+                    
+        ## Writing the number of lines and the number of points.
+        stream.write("LINES "+str(len(Tracks))+" "+str((len(TP)+1)*len(Tracks))+"\n")
+        stream.write("\n")
+        
+        ## Writing some more informations
+        idx = 0;
+        for pt in range(len(Tracks)):
+            stream.write(str(len(TP))+" \n")
+            for tp in range(len(TP)):
+                stream.write(str(idx)+" \n")
+                idx += 1
+            stream.write("\n")
+
+        stream.write("POINT_DATA "+str(len(Tracks)*len(TP))+"\n")
+        stream.write("SCALARS index int 1\n")
+        stream.write("LOOKUP_TABLE default\n")
+        stream.write("\n")
+        
+        for pt in range(len(Tracks)):
+             for tp in range(len(TP)):
+                stream.write(str(tp)+" \n")
+                
+        ## Closing the file and saving it.        
+        stream.close()
+
         
     def toVTKpoints(df, savepath):
         """
@@ -141,22 +169,95 @@ class export():
 
         """
         #Setting the name of the file and opening it.
-        file = open(savepath, "w")
+        stream = open(savepath, "w")
         
         #Getting the number of columns i.e. the number of different tracks.
         points_nb = len(df['X'].index)
-        file.write("# vtk DataFile Version 2.0\n")
-        file.write("PIV3D Trajectories\n")
-        file.write("ASCII\n")
-        file.write("DATASET POLYDATA\n")
-        file.write("POINTS "+str(points_nb)+" double\n")
+        stream.write("# vtk DataFile Version 2.0\n")
+        stream.write("PIV3D Trajectories\n")
+        stream.write("ASCII\n")
+        stream.write("DATASET POLYDATA\n")
+        stream.write("POINTS "+str(points_nb)+" double\n")
         
         #For every tracks and every timepoint (row), we write the coordinates 
         #of the given point in the file.
         for pt in range(points_nb):
-            file.write(str(df['X'].iloc[pt])+" "+\
+            stream.write(str(df['X'].iloc[pt])+" "+\
                        str(df['Y'].iloc[pt])+" "+\
                        str(df['Z'].iloc[pt])+"\n")
         #Closing the file and saving it.
-        file.close()
+        stream.close()
+        
+# class import_data():
+    
+    # def from_quickPIV(dirpath):
+        
+    #     filepaths = filemanager.search_file(dirpath, "vtk")
+    #     file_to_idx = {filepaths[k]: k for k in range(len(filepaths))}
+        
+    #     df = pd.DataFrame(dtype = "object")
+        
+    #     for filepath in filepaths:
+    #         """
+    #         Code provided by @Marc-3d.
+    #         """
+    #         stream = open(filepath, 'r')
+    
+    #         ## reading the size of the vector field
+    #         dims, length = [ 0, 0, 0 ], 0
+            
+    #         for lidx in range(0,9):
+    #             line = stream.readline()
+                
+    #             if ("DIMENSIONS" in line):
+    #                 dims = [ int(x) for x in line.split(" ")[1:4] ]
+                    
+    #             elif ("POINT_DATA" in line):
+    #                 length = int( line.split(" ")[1] )
+                    
+    #         ## Creating 3xN arrays (3 dimensions x N vectors) 
+    #         ## to store the vectors of the vector fields
+    #         displacements = np.zeros( (3, length) )
+    #         positions     = np.zeros( (3, length) )
+            
+    #         ## Reading the rest of the file. Each line contains one vector.
+    #         row, col, zet = 0, 1, 1;
+    #         for lidx in range(0,length):
+    
+    #             line  = stream.readline()
+    #             displ = [ float(x) for x in line.split(" ") ]
+    #             displacements[:,lidx] = displ
+    
+    #             ## Transforming from linear index to a 3D coordinate, 
+    #             ## ( row, col, zet ) or ( y, x, z )
+    #             row = row + 1
+    #             if ( row > dims[0] ):
+    #                 row = 1
+    #                 col = col + 1
+    #             if ( col > dims[1] ):
+    #                 col = 1
+    #                 row = 1
+    #                 zet = zet + 1
+    #             positions[:,lidx] = [ row, col, zet ]
+
+    #         stream.close()
+        
+    #         ## Removing null vectors while creating a dataframe merging both
+    #         ## position and displacements.
+    #         disp = pd.Series(dtype = "object", name = "DISP_VECT")
+    #         pos = pd.Series(dtype = "object", name = "COORD")
+            
+    #         for idx in range(displacements.shape[1]):
+    #             if not np.array_equal(displacements[:, idx], np.zeros(3)) :
+    #                 disp.loc[idx] = displacements[:, idx]
+    #                 pos.loc[idx] = positions[:, idx]
+            
+            
+    #         tp = pd.Series([file_to_idx[filepath]]*disp.shape[0], name = "TP",
+    #                        index = disp.index)
+            
+    #         subdf = pd.concat([pos, disp, tp], axis = 1)
+    #         df = pd.concat([df, subdf], axis = 0, ignore_index = True)
+            
+    #     return df
         

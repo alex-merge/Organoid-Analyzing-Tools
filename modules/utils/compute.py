@@ -91,16 +91,18 @@ class compute():
         
         for ID in df.index :
             try :
-                vectors[ID] = (df.loc[df.loc[ID, "TARGET"], coord_column]-
+                vectors.loc[ID] = (df.loc[df.loc[ID, "TARGET"], coord_column]-
                                df.loc[ID, coord_column])
             except :
-                vectors[ID] = np.zeros(3)
+                vectors.loc[ID] = np.nan
                 
         if filtering :
             if center is None :
                 center = tools.get_centroid(df, coord_column)
             
-            df = clustering.compute_clusters(df, center, coord_column)
+            df, clustCent = clustering.compute_clusters(df, 
+                                                        center, 
+                                                        coord_column)
             # selected = df[df["F_SELECT"]].index
             # vectors = vectors.loc[selected]
         
@@ -204,9 +206,9 @@ class compute():
         isHull = pd.Series(name = "isHull", dtype="bool")
         for idx in df.index :
             if idx in spots:
-                isHull[idx] = True
+                isHull.loc[idx] = True
             else :
-                isHull[idx] = False
+                isHull.loc[idx] = False
                 
         # Merging the bool isHull to df.
         df = pd.concat([df, isHull], axis = 1)
@@ -276,11 +278,13 @@ class compute():
         componentVectors = pd.DataFrame(columns = ["V1", "V2", "RA_VECT"], 
                                         dtype = "object")
         
+        # aligned_vectors = pd.Series(dtype = "object",
+        #                             name = "ALIGNED_DISP_VECT")
+        
         # Iterating over time points.
         for tp in df["TP"].unique().tolist():
             subdf = df[df["TP"] == tp][vect_column]
-            subdf = subdf.drop(index = [k for k in subdf.index 
-                                if (subdf.loc[k] == np.zeros(3)).all()])
+            subdf = subdf.dropna()
             
             ## Checking if the dataframe is not empty.
             if not subdf.empty:   
@@ -293,16 +297,36 @@ class compute():
                 V1 = pca.components_[0]
                 V2 = pca.components_[1]
                 
-                # Computingthe crossproduct.
+                # ## Getting the projection of the displacement vectors on the
+                # ## pca space (2D)
+                # vect_2D_arr = pca.transform(arr)
+                
+                # ## Resizing into a 3D array.
+                # vect_3D_arr = np.zeros((vect_2D_arr.shape[0], 3))
+                # vect_3D_arr[:, :2] = vect_2D_arr
+                
+                # ## Transforming it into a series with correct index.
+                # tmp_vectors = pd.Series([vect for vect in vect_3D_arr], 
+                #                         dtype = "object",
+                #                         name = "ALIGNED_DISP_VECT",
+                #                         index = subdf.index)
+                # aligned_vectors = pd.concat([aligned_vectors, tmp_vectors],
+                #                             axis = 0)
+                
+                # Computing the crossproduct.
                 RA = np.cross(V1, V2)
+                # if RA[2] < 0:
+                #     RA = -RA
                 
                 # Saving coordinates to th dataframe.
                 componentVectors.loc[tp] = [V1, V2, RA]
         
-        # Merging componentVectors with data.
+        ## Merging componentVectors with data and adding computed aligned 
+        ## displacement vectors to df.
         data = pd.concat([data, componentVectors], axis = 1)
+        # df = pd.concat([df, aligned_vectors], axis = 1)
         
-        return data
+        return df, data
         
     def alignment(df, data, inplace = True):
         """
@@ -316,6 +340,8 @@ class compute():
         
         newRA = data.loc[:, "RA_VECT"].copy()
         
+        new_Disp = df.loc[:, "DISP_VECT"].copy()
+        
         rot_angles = pd.DataFrame(columns = ["Theta_X", "Theta_Y"],
                                    dtype = "float")
         
@@ -326,7 +352,7 @@ class compute():
             if not isinstance(coord, np.ndarray) and tp != 0:
                 coord = newRA.loc[tp-1]
             
-            theta_x = abs(np.arctan2(coord[1], coord[2]))%np.pi
+            theta_x = np.arctan2(coord[1], coord[2])#%np.pi
             rot_angles.loc[tp, "Theta_X"] = theta_x
             
             # Applying X rotation
@@ -336,7 +362,7 @@ class compute():
             
             coord = np.matmul(rot_x, coord)
             
-            theta_y = abs(-np.arctan2(coord[0], coord[2]))%np.pi
+            theta_y = -np.arctan2(coord[0], coord[2])#%np.pi
             rot_angles.loc[tp, "Theta_Y"] = theta_y
             
             # Applying Y rotation
@@ -352,7 +378,7 @@ class compute():
         
         for ID in newCoords.index :
             
-            coord = newCoords.loc[ID]
+            coord = newCoords.loc[ID]            
             
             tp = df.loc[ID, "TP"]
             
@@ -365,6 +391,7 @@ class compute():
             
             coord = np.matmul(rot_x, coord)
             
+            
             theta_y = rot_angles.loc[tp, "Theta_Y"]
             
             ## Rotation on the y axis
@@ -374,16 +401,28 @@ class compute():
             
             coord = np.matmul(rot_y, coord)
             
+            ## Rotating the displacement vectors
+            disp = new_Disp.loc[ID]
+            if isinstance(disp, np.ndarray):
+                disp = np.matmul(rot_x, disp)
+                disp = np.matmul(rot_y, disp)
+            
+            else:
+                disp = np.nan
+            
             newCoords.loc[ID] = coord
+            new_Disp.loc[ID] = disp
         
         newCoords.name = "ALIGNED_COORD"
+        new_Disp.name = "ALIGNED_DISP_VECT"
 
         if inplace :
-            return (pd.concat([df, newCoords], axis = 1), 
+            return (pd.concat([df, newCoords, new_Disp], axis = 1), 
                     pd.concat([data, newRA, rot_angles], axis = 1))
         
         else :
-            return newCoords, pd.concat([newRA, rot_angles], axis = 1)
+            return (newCoords, 
+                    pd.concat([newRA, rot_angles], axis = 1))
         
     def angular_velocity(df, data, inplace = True):
         
@@ -393,17 +432,19 @@ class compute():
         distance = pd.Series(dtype= "float", name = "DISTANCE_TO_RA")
         
         for ID in subdf.index:
-            
-            distance[ID] = np.linalg.norm(subdf.loc[ID, "ALIGNED_COORD"][:2])
-            
+            coord = subdf.loc[ID, "ALIGNED_COORD"]
+
+            distance.loc[ID] = np.linalg.norm(coord[:2])
+            disp = subdf.loc[ID, "ALIGNED_DISP_VECT"]
             RA_vect = data.loc[subdf.loc[ID, "TP"], "ALIGNED_RA_VECT"]
             
-            disp_vector = subdf.loc[ID, "ALIGNED_COORD"]
+            if isinstance(disp, np.ndarray) and \
+                isinstance(RA_vect, np.ndarray):
+                velocity = np.linalg.norm(np.cross(disp, RA_vect))/(distance[ID])
+            else:
+                velocity = np.nan
             
-            velocity = np.linalg.norm(np.cross(disp_vector, RA_vect))/(
-                distance[ID])
-            
-            angular_velocity[ID] = velocity
+            angular_velocity.loc[ID] = velocity
         
         velocityByCell = pd.concat([angular_velocity.to_frame(),
                                     distance.to_frame(), df["TP"].to_frame()],

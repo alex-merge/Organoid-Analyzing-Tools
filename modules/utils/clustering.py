@@ -129,13 +129,13 @@ class clustering():
     
         """
         ## Computing cIter centroids based on subsamples of the main df.
-        centroids = np.array([tools.get_centroid(df.sample(cSample, axis=0), 
-                                        coord_column)
-                              for k in range(cIter)])
+        centroids = [tools.get_centroid(df.sample(cSample, axis=0), 
+                                        coord_column) 
+                     for k in range(cIter)]
         
         ## Getting the median centroid.
-        centroid = np.array([np.median(centroids[:, k]) 
-                             for k in range(centroids.shape[1])])
+        centroid = np.array([np.median(np.array(centroids)[:, k]) 
+                             for k in range(np.array(centroids).shape[1])])
         
         ## Computing the distance between each point and the centroid.
         distance = pd.Series(dtype = "object", name = "DISTANCE")
@@ -221,17 +221,17 @@ class clustering():
     
         """
         
-        # Clustering every spots, frame by frame and adding the results to the
-        # res temporary datafame.
+        ## Clustering every spots, frame by frame and adding the results to the
+        ## res temporary datafame.
         Results = pd.DataFrame(dtype = "float")
         
-        # Creating a dataframe to store informations about the distance (see
-        # clusteringEngine). 
-        clustDist = pd.DataFrame(columns = ["Distance", "TP"], 
-                                 dtype = "object")
+        ## Creating a dataframe to store informations about the distance (see
+        ## clusteringEngine). 
+        clustDist = pd.DataFrame(columns = ["DISTANCE_CENTROID"], 
+                                 dtype = "float")
         
-        # Creating a dataframe to save the centroids coordinates that have been
-        # computed (for debug reasons).
+        ## Creating a dataframe to save the centroids coordinates that have been
+        ## computed (for debug reasons).
         clustCent = pd.DataFrame(columns = ["COORD", "TP"], 
                                  dtype = "object")
         
@@ -243,27 +243,32 @@ class clustering():
                                          cIter, cSample, eps, 
                                          min_samples, min_cells)
             
-            cent = pd.Series([cent[i] for i in range(cent.shape[0])], 
-                             name = "CENTROIDS", dtype = "object")
+            cent = pd.Series(cent, name = "COORD")
             cent = cent.to_frame()
             
             dist = dist.to_frame()
-            dist.columns = ["Distance"]
+            dist.columns = ["DISTANCE_CENTROID"]
             
-            # Adding time points info to the distance and centroid dataframes.
-            dist["TP"] = [tp]*dist.shape[0]
+            # Adding time points info to the centroid dataframes.
             cent["TP"] = [tp]*cent.shape[0]
             
             Results = pd.concat([Results, clusterResults])
             clustDist = pd.concat([clustDist, dist])
-            
+            clustCent = pd.concat([clustCent, cent])
+        
+        ## Setting correct type for columns.
+        clustCent["TP"] = clustCent["TP"].astype("int")
+        clustDist["DISTANCE_CENTROID"] = clustDist["DISTANCE_CENTROID"
+                                                   ].astype("float")
+        
         if inplace :    
-            # Adding the cluster infos to the dataframe. 
-            df = pd.concat([df, Results], axis = 1)
-            return df
+            ## Adding the distance to centroid and cluster infos to 
+            ## the dataframe.
+            df = pd.concat([df, clustDist, Results], axis = 1)
+            return df, clustCent
         
         else :
-            return Results
+            return Results, clustDist, clustCent
         
     def select_ROI(subdf, std = 15, eps = 2, min_samples = 3, offset = 5):
         """

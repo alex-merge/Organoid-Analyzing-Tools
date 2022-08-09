@@ -19,10 +19,13 @@ import cv2
 import time
 
 from modules.utils.clustering import clustering
-from modules.tools import tools
+from modules.utils.tools import tools
 from modules.utils.compute import compute
+from modules.utils.filemanager import filemanager
 from modules.export import export
-from modules.figures import figures
+from modules.utils.figures import figures
+from modules.vectors import vectors
+from modules.preprocessing import preprocessing
 
 class OAT():
     
@@ -59,106 +62,19 @@ class OAT():
         self.files = pd.DataFrame(dtype="str")
         
         # Building the directories tree
-        self.buildTree()
+        self.dir = filemanager.buildTree(self.dir["root"], fiji_dir)
+        
         self.version = "0.7"
-         
-    
-                
-    def importFiles(self, mode):
-        """
-        Retrieve and check if the given type of input file are good to work 
-        with. 
 
-        Parameters
-        ----------
-        mode : str
-            Mode (i.e. target) for the search : 
-                - "tifs" for images files
-                - "spots" for csv with spots data
-                - "tracks" for csvs with edges and tracks data
-
-        """
-        # Checking tifs files.
-        if mode == "tifs" :
-            # Looking for tif images.
-            tifs = [file for file in os.listdir(self.dir["tifs"]) 
-                         if re.split(r'\.', file)[-1] == "tif"]
-            # Checking if there are images.
-            if len(tifs) == 0 :
-                # If there are no files.
-                raise ImportError("No tif image in the directory")
-            else :
-                self.files["tifs"] = tifs
-                self.files.index = [re.split("\.tif", file)[0] 
-                                    for file in tifs]
-                self.files["TP"] = [k for k in range(len(self.files.index))]
-                self.sample = os.path.commonprefix(list(self.files["tifs"]))
-                
-        # Checking csv files related to spots.
-        if mode == "spots" :
-            # Looking for csv files.
-            spots = [file for file in os.listdir(self.dir["spots"])
-                                if re.split('\.', file)[-1] == 'csv']
-            if len(spots) == 0 :
-                self.setInstructions()
-                raise ImportError("No .csv found in the spots directory")
-            else :
-                # Adding and linking them to the file table.
-                spots = pd.Series(spots, index = [re.split("\_rs.csv", file)[0]
-                                                  for file in spots],
-                                  name = "spots", dtype = "str")
-                self.files = pd.concat([self.files, spots], axis = 1)
-                
-        # Checking csv files related to tracks and edges.
-        if mode == "tracks" :
-            # Looking for csv files containing tracks.
-            tracks_csv = self.dir["tracks"]+"\\"+"tracks.csv"
-            edges_csv = self.dir["tracks"]+"\\"+"edges.csv"
-            if os.path.exists(tracks_csv) :
-                self.tracks_csv = tracks_csv
-            else : 
-                self.tracks_csv = None
-            if os.path.exists(edges_csv) :
-                self.edges_csv = edges_csv
-            else : 
-                self.edges_csv = None
-            if self.tracks_csv == None or self.edges_csv == None :
-                raise ImportError("One or all .csv are missing in the directory")
-            
-    def showData(self):
-        features = self.data.columns
-        # fig, axs = plt.subplots(1, len(features), figsize=(20, 6), dpi = 400)
-        if "volume" in features:
-            plt.plot(self.data.index, self.data["volume"])
-            plt.xlabel("Time point")
-            plt.ylabel("Volume")
-            plt.title("Volume of the organoid through time")
-            #plt.text(1, 1, "OAT Version : "+str(self.version))
-            plt.show()
-            plt.close()
-        if "NumberOfCells" in features:
-            plt.plot(self.data.index, self.data["NumberOfCells"])
-            plt.xlabel("Time point")
-            plt.ylabel("Number of cells")
-            plt.title("Number of cells through time")
-            plt.show()
-            plt.close()
-        if "distance" in features:
-            plt.plot(self.data.index, self.data["distance"])
-            plt.xlabel("Time point")
-            plt.ylabel("Travelled distance between 2 time points")
-            plt.title("Travelled distance through time")
-            plt.show()
-            plt.close()
-            
+    def vectors_analysis(self):
+        self.tracks, self.data = vectors.full_analysis(self.dir["tracks"])
+        figures.show_angular_velocity(self.tracks, self.data, 
+                                      savepath = self.dir["avFigs"])
     
-        
+    def timeplapse_cleaning(self):
+        pass
     
-        
-    
-        
-        
-                  
+                 
 if __name__ == "__main__":
     T = OAT(fiji_dir = r"C:\Apps\Fiji.app", wrk_dir = r"D:\Wrk\Datasets\4")
     #T.loadTif()

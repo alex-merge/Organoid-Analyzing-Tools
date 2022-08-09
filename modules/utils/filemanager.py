@@ -38,7 +38,7 @@ class filemanager():
             return [file for file in os.listdir(dirpath) 
                     if re.split("\.", file)[-1] == extension]
     
-    def buildTree(wrkdir):
+    def buildTree(wrkdir, fiji_dir):
         """
         Create the directories tree in the working directory.
 
@@ -46,6 +46,8 @@ class filemanager():
         ----------
         wrkdir : str
             Path to the dataset root folder.
+        fiji_dir : str
+            Path to the fiji directory.
 
         Returns
         -------
@@ -75,6 +77,9 @@ class filemanager():
         for path in dirpath:
             if not os.path.exists(path):
                 os.makedirs(path)
+                
+        ## Adding fiji path
+        dirpath["fiji"] = fiji_dir
                 
         return dirpath
     

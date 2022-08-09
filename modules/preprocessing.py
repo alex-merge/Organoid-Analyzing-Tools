@@ -18,6 +18,7 @@ from modules.utils.filemanager import *
 from modules.utils.clustering import *
 from modules.utils.image import *
 from modules.utils.tools import *
+from modules.utils.figures import *
 
 class preprocessing():
     
@@ -72,6 +73,7 @@ class preprocessing():
         ## For the moment, files are sorted and imported as if the time point 
         ## starts at 0.
         for tp in range(len(filespath)):
+
             
             ## Reading the CSV.
             stream = pd.read_csv(filespath[tp], index_col = "LABEL")
@@ -79,12 +81,12 @@ class preprocessing():
             # Renaming columns to have smaller names.
             stream.rename(columns = {"POSITION_"+axis: axis for axis in 
                                      ["X", "Y", "Z"]},
-                          inplace = True)
+                          inplace = True)            
             
             # Keeping useful columns.
             stream = stream.loc[:,["QUALITY", "X", "Y", "Z"]]
             
-            # Setting every values to float type.
+            ## Setting every values to float type.
             stream = stream.astype("float")
             
             ## Adding the time point.
@@ -92,6 +94,14 @@ class preprocessing():
             
             ## Merging the dataframe to the main one.
             df = pd.concat([df, stream])
+        
+        coords = pd.Series(dtype = "object", name = "COORD")
+        for index in df.index :
+
+            coords[index] = np.array( df.loc[index, list("XYZ")].tolist() )
+        
+        df = pd.concat([df, coords], axis = 1)
+        df.drop(columns = list("XYZ"), inplace = True)
         
         df["TP"] = df["TP"].astype("int")    
         
@@ -126,7 +136,7 @@ class preprocessing():
             whatever the time point is.
         
         """
-        # Creating the dataframe that contains all the ROI limits.
+        ## Creating the dataframe that contains all the ROI limits.
         labels = ["X_min", "X_max", "Y_min", "Y_max", "Z_min", "Z_max"]
         ROI = pd.DataFrame(columns = labels, dtype = "float")
         
@@ -137,9 +147,12 @@ class preprocessing():
         for tp in TP :
             subdf = df[df["TP"] == tp]
             subdf = subdf[subdf["F_SELECT"]]
-            ROI.loc[tp] = [subdf["X"].min(), subdf["X"].max(),
-                           subdf["Y"].min(), subdf["Y"].max(),
-                           subdf["Z"].min(), subdf["Z"].max()]
+            
+            arr = np.array(subdf["COORD"].tolist())
+            
+            ROI.loc[tp] = [arr[0].min(), arr[0].max(),
+                           arr[1].min(), arr[1].max(),
+                           arr[2].min(), arr[2].max()]
         
         globalROI = []
         
@@ -229,9 +242,9 @@ class preprocessing():
         ## Clustering the spots.
         step_time = time.time()
         print("Clustering spots ...", end = " ")
-        df = clustering.compute_clusters(df, center, clust_eps, 
-                                         clust_min_samples, centroid_iter, centroid_sample, 
-                                         min_cells, rescaling)
+        df, clustCent = clustering.compute_clusters(
+            df, center, "COORD", clust_eps, clust_min_samples, centroid_iter, 
+            centroid_sample, min_cells, rescaling)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
         ## Getting the ROI using clustering results.
@@ -258,90 +271,9 @@ class preprocessing():
         print("Image saved as :", savepath)
         print("Total time :", str(round(time.time()-start_time, 2))+"s")
         
-        return df
+        return df, clustCent
         
-    def show_spots(df, TP, show = True, savepath = None,
-                   show_centroids = True, color_clusters = True):
-        """
-        Create a figure showing spots for a given time point.
-        The figure can be saved. See parameters below.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Dataframe containing coordinates and time points (X, Y, Z, TP).
-        TP : int
-            Time point to show the spots.
-        show : bool, optional
-            Show the figure. The default is True.
-        save : bool, optional
-            Save the figure, need savepath to work. The default is False.
-        savepath : str, optional
-            Full path of the output figure. The default is None.
-        show_centroids : bool, optional
-            Add the centroid to the figure. The default is True.
-        color_clusters : bool, optional
-            Add cluster information to the figure. The default is True.
-
-        """
-        
-        ## Setting which time points to display.
-        if not isinstance(TP, int) :
-            raise TypeError("TP must be int")
-            
-        ## Creating the figure.
-        fig = plt.figure(figsize=(10, 7), dpi = 400)
-        plt.style.use("seaborn-paper")
-        
-        ## Set global font
-        plt.rcParams.update({'font.family':'Montserrat'})
-        
-        legend = []
-            
-        subdf = df[df["TP"] == TP].copy()
-        
-        ax = fig.add_subplot(111, projection = "3d")
-        
-        if color_clusters and "F_SELECT" in subdf.columns:
-            t_df = subdf[subdf["F_SELECT"]]
-            f_df = subdf[subdf["F_SELECT"] == False]
-            
-            ax.scatter(t_df["X"], t_df["Y"], t_df["Z"], c = "green", s = 50)
-            ax.scatter(f_df["X"], f_df["Y"], f_df["Z"], c = "orange", s = 20)
-            
-            legend.append(Line2D([0], [0], marker = 'o', 
-                                 color = "green", 
-                                 label = 'Selected spots',
-                                 markerfacecolor = "green", 
-                                 markersize=7, ls = ''))   
-            
-        else :
-            ax.scatter(subdf["X"], subdf["Y"], subdf["Z"], c = "skyblue")
-        
-        if show_centroids :
-            cx, cy, cz = tools.get_centroid(subdf)
-            ax.scatter(cx, cy, cz, c="red", marker = "^", s = 50)
-            
-            legend.append(Line2D([0], [0], marker = '^', 
-                                 color = "red", 
-                                 label = 'Raw centroid',
-                                 markerfacecolor = "red", 
-                                 markersize=7, ls = ''))
-        
-        ax.set_title("Detected spots for time point "+str(TP), fontsize = 15)
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_zlabel('z')
-        
-        ax.legend(handles = legend, loc = 'best')
-        
-        if show :
-            plt.show()
-            
-        if savepath is not None :
-            plt.savefig(savepath, dpi = 400)
-            
-        plt.close()
+    
             
             
             
