@@ -442,7 +442,7 @@ class figures():
         fig, axs = plt.subplots(2, 2, figsize = (16, 9), dpi = 400)
         
         ## Plotting AV over time.
-        sns.lineplot(ax = axs[0, 0], data = df, x = "TP", y = "ANG_VELOCITY",
+        sns.lineplot(ax = axs[0, 0], data = df, x = "TP", y = "ANG_VELOCITY_RAD",
                      ci='sd', err_style='bars', marker = "o")
         sns.despine()
         axs[0, 0].set(xlabel = 'Time point', ylabel = 'Angular velocity',
@@ -457,10 +457,10 @@ class figures():
         
         ## Plotting angular velocity over distance to rotation axis.
         distance = [np.linalg.norm(arr[:2]) for arr in df["ALIGNED_COORD"]]
-        hue = (df["ANG_VELOCITY"]/(df["ANG_VELOCITY"].mean()))
+        hue = (df["ANG_VELOCITY_RAD"]/(df["ANG_VELOCITY_RAD"].mean()))
         hue.name = 'Relative to the average angular velocity'
         
-        sns.scatterplot(ax = axs[0, 1], x = distance, y = df["ANG_VELOCITY"],
+        sns.scatterplot(ax = axs[0, 1], x = distance, y = df["ANG_VELOCITY_RAD"],
                         hue = hue)
         sns.despine()
         axs[0, 1].set(xlabel = 'Distance to rotation axis (px)', 
@@ -510,6 +510,32 @@ class figures():
         
         plt.show()
         plt.close()
+        
+    def show_angular_velocity_by_cell(df, TP, threshold = 15, data = None, 
+                                      show = True, savepath = None):
+        plt.style.use("seaborn-paper")
+        plt.rcParams.update({'font.family':'Montserrat'})
+        
+        cmap = plt.cm.get_cmap("viridis")
+        
+        arr = np.array(df[df["TP"] == TP]["ALIGNED_COORD"].tolist())
+        print(arr)
+        if np.isnan(arr).any() :
+            raise ValueError("Unable to show as there are NaN values")
+        
+        fig, axs = plt.subplots(1, figsize = (16, 9), dpi = 400)
+        
+        color = ["red"*(k < threshold)+"green"*(k >= threshold) for k in 
+                 df[df["TP"] == TP]["ANG_VELOCITY_DEG"]]
+        
+        axs.scatter(arr[:, 0], arr[:, 1], c = color)
+        
+        axs.set_xlabel("x")
+        axs.set_ylabel("y")
+        
+        plt.show()
+        plt.close()
+
         
     def animVectors(self, TP = "all", fps = 1, lim = None, df = "default", 
                     rotAxis = True, cellVoxels = False, 

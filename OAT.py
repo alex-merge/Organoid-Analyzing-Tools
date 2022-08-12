@@ -29,7 +29,7 @@ from modules.preprocessing import preprocessing
 
 class OAT():
     
-    def __init__(self, fiji_dir = r"C:\Apps\Fiji.app", wrk_dir = None):
+    def __init__(self):
         """
         Initialize the sample analysis by creating the directories needed.
 
@@ -42,52 +42,76 @@ class OAT():
             The default is the script directory.
 
         """
-        # Creating the directory table
-        self.dir = pd.Series(dtype="str")
-        
-        # Adding the fiji directory
-        if not os.path.exists(fiji_dir):
-            raise FileNotFoundError("No such fiji directory")
-        self.dir["fiji"] = fiji_dir
-        
-        # Adding the working directory
-        if wrk_dir == None :
-            self.dir["root"] = os.getcwd()
-        else :
-            if not os.path.exists(wrk_dir):
-                os.makedirs(wrk_dir)
-            self.dir["root"] = wrk_dir
             
-        # Creating the file table    
-        self.files = pd.DataFrame(dtype="str")
-        
-        # Building the directories tree
-        self.dir = filemanager.buildTree(self.dir["root"], fiji_dir)
-        
         self.version = "0.7"
+        
+    def info(self):
+        print("Organoid Analyzing Tools")
+        print("Version : "+self.version)
+        
+    def load_spot_data(self, dirpath):
+        if not isinstance(dirpath, str) or not filemanager.check_folder(dirpath):
+            raise ValueError("dirpath must be a path")
+        
+        self.dirpath = dirpath
+        
+        
+        
+    def load_vector_data(self, dirpath, datatype = "auto", 
+                         rescaling = [1, 1, 1], filtering = False):
+ 
+        
+        if not isinstance(dirpath, str) or not filemanager.check_folder(dirpath):
+            raise ValueError("dirpath must be a path")
+            
+        self.dirpath = dirpath
+        
+        if not isinstance(datatype, str):
+            raise TypeError("data_type must be string type")   
+            
+        elif datatype == "trackmate":
+            self.tracks = vectors.load_from_trackmate(dirpath, rescaling, 
+                                                      filtering)
+            
+        elif datatype == "quickPIV":
+            self.tracks = vectors.load_from_quickPIV(dirpath)
+            
+        elif datatype == "auto":
+            vtk_files = filemanager.search_file(dirpath, "vtk")
+            csv_files = filemanager.search_file(dirpath, "csv")
+            
+            if len(vtk_files) != 0 and len(csv_files) == 0:
+                self.tracks = vectors.load_from_quickPIV(dirpath)
+                
+            elif len(vtk_files) == 0 and len(csv_files) != 0:
+                self.tracks = vectors.load_from_trackmate(dirpath, rescaling, 
+                                                          filtering)
+            
+            else :
+                raise ImportError("Unable to assess the datatype")
+                
+        else :
+            raise ValueError("Unrecognized datatype")
 
-    def vectors_analysis(self):
-        self.tracks, self.data = vectors.full_analysis(self.dir["tracks"])
+    def vectors_analysis(self, savepath = None):
+        if savepath is None:
+            savedir = self.dirpath+"\\figures\\"
+            filemanager.check_folder(savedir, create = True)
+            
+            savepath = savedir+"\\Analysis_over_time.png"
+        
+        if not hasattr(self, "tracks"):
+            raise ImportError("No data has been loaded")
+            
+        self.tracks, self.data = vectors.full_analysis(self.tracks)
+        
         figures.show_angular_velocity(self.tracks, self.data, 
-                                      savepath = self.dir["avFigs"])
+                                      savepath = savepath)
     
     def timeplapse_cleaning(self):
         pass
     
                  
 if __name__ == "__main__":
-    T = OAT(fiji_dir = r"C:\Apps\Fiji.app", wrk_dir = r"D:\Wrk\Datasets\4")
-    #T.loadTif()
-    #T.getROI()
-    #T.getVectors(filtering = False, rescaling = [1, 1, 4])
-    #T.computeStats()
-    # T.showData()
-    # T.animVectors()
-    S = OAT(wrk_dir = r"D:\Wrk\Datasets\S5")
-    #S.getVectors()
-    #S.alignRotAxis()
-    #S.computeAngularVelocity()
-    #S.loadTif()
-    #T.getROI()
-    #S.getVectors(filtering = False)
+    pass
         

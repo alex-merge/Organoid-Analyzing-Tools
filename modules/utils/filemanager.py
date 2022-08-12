@@ -37,6 +37,21 @@ class filemanager():
         else :
             return [file for file in os.listdir(dirpath) 
                     if re.split("\.", file)[-1] == extension]
+        
+    def check_folder(dirpath, create = False):
+        ## Checking if the folder exist.
+        if not os.path.exists(dirpath):
+            
+            ## If no, proceed to create it if set to True
+            if create:
+                os.makedirs(dirpath)
+                return True
+            
+            return False
+            
+        
+        else :
+            return True
     
     def buildTree(wrkdir, fiji_dir):
         """

@@ -428,39 +428,55 @@ class compute():
         
         subdf = df.copy()
         
-        angular_velocity = pd.Series(dtype = "float", name = "ANG_VELOCITY")
-        distance = pd.Series(dtype= "float", name = "DISTANCE_TO_RA")
+        results = pd.DataFrame(dtype = "float", 
+                                columns = ["ANG_VELOCITY_RAD", 
+                                           "ANG_VELOCITY_DEG",
+                                           "TANGENTIAL_VELOCITY", 
+                                           "DISTANCE_TO_RA"])
         
         for ID in subdf.index:
-            coord = subdf.loc[ID, "ALIGNED_COORD"]
-
-            distance.loc[ID] = np.linalg.norm(coord[:2])
+            coord = subdf.loc[ID, "ALIGNED_COORD"].copy()
+            coord[2] = 0
+            dist = np.linalg.norm(coord)
+            
             disp = subdf.loc[ID, "ALIGNED_DISP_VECT"]
-            RA_vect = data.loc[subdf.loc[ID, "TP"], "ALIGNED_RA_VECT"]
             
-            if isinstance(disp, np.ndarray) and \
-                isinstance(RA_vect, np.ndarray):
-                velocity = np.linalg.norm(np.cross(disp, RA_vect))/(distance[ID])
+            
+            if isinstance(coord, np.ndarray) and \
+                isinstance(disp, np.ndarray):
+                    
+                ang_velocity_vect = np.cross(coord, disp)/(dist**2)
+                
+                ang_velocity = np.linalg.norm(ang_velocity_vect)
+                in_deg = ang_velocity*180/np.pi
+                
+                tang_velocity = np.linalg.norm(
+                    np.cross(ang_velocity_vect, coord))
+                
+                res = [ang_velocity, in_deg, tang_velocity, dist]
+                
             else:
-                velocity = np.nan
+                res = [np.nan, np.nan, np.nan, dist]
             
-            angular_velocity.loc[ID] = velocity
+            results.loc[ID] = res
         
-        velocityByCell = pd.concat([angular_velocity.to_frame(),
-                                    distance.to_frame(), df["TP"].to_frame()],
+        velocityByCell = pd.concat([results, df["TP"].to_frame()],
                                    axis = 1)
-        velocityByCell["ANG_VELOCITY"] = round(velocityByCell["ANG_VELOCITY"], 
-                                               3)
+        velocityByCell["ANG_VELOCITY_RAD"] = round(
+            velocityByCell["ANG_VELOCITY_RAD"], 3)
         
-        velocityByTP = pd.DataFrame(columns = ["Mean_AV", "Std_AV"],
+        velocityByTP = pd.DataFrame(columns = ["Mean_AV", "Std_AV", 
+                                               "Mean_TV", "Std_TV"],
                               index = data.index, dtype = "float")
         
         for tp in velocityByTP.index:
             subdf = velocityByCell[velocityByCell["TP"] == tp].copy()
-            mean = subdf["ANG_VELOCITY"].mean()
-            std = subdf["ANG_VELOCITY"].std()
+            av_mean = subdf["ANG_VELOCITY_RAD"].mean()
+            av_std = subdf["ANG_VELOCITY_RAD"].std()
+            tv_mean = subdf["TANGENTIAL_VELOCITY"].mean()
+            tv_std = subdf["TANGENTIAL_VELOCITY"].std()
             
-            velocityByTP.loc[tp] = [mean, std]
+            velocityByTP.loc[tp] = [av_mean, av_std, tv_mean, tv_std]
             
         velocityByCell.drop(columns = "TP", inplace = True)
         

@@ -220,6 +220,45 @@ class vectors():
             
         return df
     
+    def load_from_csv(dirpath = None, filepath = None, coord_prefix = "COORD_"):
+        
+        if dirpath is not None:
+            filepaths = filemanager.search_file(dirpath, csv)
+        elif filepath is not None:
+            filepaths = [filepath]
+        elif dirpath is not None and filepath is not None:
+            raise ValueError("Too many inputs : choose between directory and specific file")
+        else :
+            raise ValueError("No inputs")
+            
+        final_df = pd.DataFrame(dtype = "object", 
+                                columns = ["TP", "TRACK_ID", "COORD"])
+            
+        for file_id in range(len(filepaths)) :
+            stream = pd.read_csv(file)
+            
+            if not "TP" in stream.columns :
+                temp_df = stream["TRACK_ID"].to_frame()
+                temp_df = pd.concat([temp_df, 
+                                     pd.Series([file_id]*len(temp_df.index))],
+                                    axis = 1)
+            else :
+                temp_df = stream[["TP", "TRACK_ID"]]
+            
+            coord = pd.Series(dtype = "object")
+            
+            for idx in stream.index:
+                coord.loc[idx] = np.array(
+                    stream.loc[idx, [coord_prefix+k for k in list("XYZ")]].tolist()
+                    )
+                
+            temp_df = pd.concat([temp_df, coord], axis = 1)
+            
+            final_df = pd.concat([final_df, temp_df], axis = 0)
+            
+        return final_df
+            
+    
     def full_analysis(df):
         
         start_time = time.time()
@@ -233,7 +272,11 @@ class vectors():
         ## Computing volume and radius.
         step_time = time.time()
         print("Computing volume and radius ...", end = " ")
-        data = pd.concat([data, compute.volume(df)], axis = 1)
+        if df.shape[0]/len(df["TP"].unique()) >= 4 :
+            data = pd.concat([data, compute.volume(df)], axis = 1)
+        else : 
+            data = pd.concat([data, pd.Series([0]*df.shape[0], index = df.index,
+                                              name = "volume")], axis = 1)
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         
         ## Translating coords to the center ([0, 0, 0])
