@@ -313,7 +313,7 @@ class vectors():
         -------
         df : pandas.DataFrame
             Same input dataframe with the translated coordinates added in
-            "TRANS_COORD".
+            "CENTRD_COORD".
 
         """
         
@@ -322,7 +322,7 @@ class vectors():
         
         if filemanager.check_requirements(df, ["COORD", "TP"]) and \
             (data is not None and \
-             filemanager.check_requirements(data, ["RAW_CENT"])):
+             filemanager.check_requirements(data, ["CENTROID"])):
                 
             df = compute.translation(df, data)
             
@@ -387,7 +387,7 @@ class vectors():
         step_time = time.time()
         print("Aligning rotation axis and Z axis ...", end = " ")
         
-        if (filemanager.check_requirements(df, ["TRANS_COORD", "DISP_VECT", "TP"])
+        if (filemanager.check_requirements(df, ["CENTRD_COORD", "DISP_VECT", "TP"])
             and filemanager.check_requirements(data, ["RA_VECT"])):
             
             df, data = compute.alignment(df, data)

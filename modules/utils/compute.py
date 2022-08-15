@@ -67,7 +67,7 @@ class compute():
         TP = df["TP"].unique().tolist()
         TP.sort()
         
-        raw_centroid = pd.Series(index = TP, name = "RAW_CENT", 
+        raw_centroid = pd.Series(index = TP, name = "CENTROID", 
                                  dtype = "object")
         drift_distance = pd.Series(index = TP, name = "DRIFT", 
                                  dtype = "float")
@@ -75,7 +75,7 @@ class compute():
                                  dtype = "object")
         
         if "F_SELECT" in df.columns :
-            clust_centroid = pd.Series(index = TP, name = "CLUST_CENT", 
+            clust_centroid = pd.Series(index = TP, name = "CLUST_CENTROID", 
                                        dtype = "object")
         
         ## Iterating over time point.
@@ -174,9 +174,9 @@ class compute():
                          index = df["TP"].unique())
         
         if data is not None :
-            column = "RAW_CENT"
-            if "CLUST_CENT" in data.columns :
-                column = "CLUST_CENT"
+            column = "CENTROID"
+            if "CLUST_CENTROID" in data.columns :
+                column = "CLUST_CENTROID"
                 
             translation = data[column] - dest
         
@@ -193,7 +193,7 @@ class compute():
             index = df.index)
         
         if inplace:
-            df["TRANS_COORD"] = df[coord_column] - f_translation
+            df["CENTRD_COORD"] = df[coord_column] - f_translation
             return df
 
         return df[coord_column] + f_translation
@@ -248,7 +248,7 @@ class compute():
 
         """
 
-        newCoords = df.loc[:, "TRANS_COORD"].copy()
+        newCoords = df.loc[:, "CENTRD_COORD"].copy()
         
         newRA = data.loc[:, "RA_VECT"].copy()
         
@@ -361,7 +361,7 @@ class compute():
                      round(AV, 3), round(AV*180/np.pi, 3)], 
                     name = ID, index = av_res.columns, dtype = "object")
         
-        velocityByTP = pd.DataFrame(columns = ["Mean_AV", "Std_AV"],
+        velocityByTP = pd.DataFrame(columns = ["MEAN_AV", "STD_AV"],
                                     index = data.index, dtype = "float")
         
         for tp in velocityByTP.index:
