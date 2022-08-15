@@ -52,6 +52,34 @@ class filemanager():
         
         else :
             return True
+        
+    def check_requirements(dataframe, columns):
+        """
+        Check if the given columns are in the dataframe.
+        Raise an error if not.
+
+        Parameters
+        ----------
+        dataframe : pandas.DataFrame
+            Dataframe whose columns have to be tested.
+        columns : list of str.
+            Columns names that have to be in the dataframe.
+
+        Returns
+        -------
+        bool.
+            True if requirements are met, raise an error otherwise. 
+
+        """
+        not_in = [column for column in columns\
+                  if column not in dataframe.columns]
+            
+        if len(not_in) != 0:
+            col_names = ", ".join(not_in)
+            raise AttributeError("Missing informations in the dataframe : "+col_names)
+            
+        return True
+        
     
     def buildTree(wrkdir, fiji_dir):
         """

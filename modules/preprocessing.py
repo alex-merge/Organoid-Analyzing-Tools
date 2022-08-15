@@ -19,6 +19,7 @@ from modules.utils.clustering import *
 from modules.utils.image import *
 from modules.utils.tools import *
 from modules.utils.figures import *
+from modules.import_data import *
 
 class preprocessing():
     
@@ -48,64 +49,6 @@ class preprocessing():
         for img in range(len(img_paths)):
             instructions.write(img_paths[img]+","+out_paths[img])
     
-    def read_spots(dirpath):
-        """
-        Load segmentation result of Trackmate detection as a dataframe.
-
-        Parameters
-        ----------
-        dirpath : str
-            Path to the directory containing files.
-
-        Returns
-        -------
-        df : pd.DataFrame
-            Dataframe where index are spots and columns are 
-            ("QUALITY", "X", "Y", "Z", "TP").
-
-        """
-        ## Importing the files.
-        filespath = filemanager.search_file(dirpath, "csv")
-
-        df = pd.DataFrame(columns=["QUALITY", "X", "Y", "Z"],
-                          dtype = "float")
-        
-        ## For the moment, files are sorted and imported as if the time point 
-        ## starts at 0.
-        for tp in range(len(filespath)):
-
-            
-            ## Reading the CSV.
-            stream = pd.read_csv(filespath[tp], index_col = "LABEL")
-            
-            # Renaming columns to have smaller names.
-            stream.rename(columns = {"POSITION_"+axis: axis for axis in 
-                                     ["X", "Y", "Z"]},
-                          inplace = True)            
-            
-            # Keeping useful columns.
-            stream = stream.loc[:,["QUALITY", "X", "Y", "Z"]]
-            
-            ## Setting every values to float type.
-            stream = stream.astype("float")
-            
-            ## Adding the time point.
-            stream["TP"] = stream.shape[0]*[tp]
-            
-            ## Merging the dataframe to the main one.
-            df = pd.concat([df, stream])
-        
-        coords = pd.Series(dtype = "object", name = "COORD")
-        for index in df.index :
-
-            coords[index] = np.array( df.loc[index, list("XYZ")].tolist() )
-        
-        df = pd.concat([df, coords], axis = 1)
-        df.drop(columns = list("XYZ"), inplace = True)
-        
-        df["TP"] = df["TP"].astype("int")    
-        
-        return df
             
     def get_ROI(df, std = 15, eps = 2, min_samples = 3, roi_offset = 5):
         """

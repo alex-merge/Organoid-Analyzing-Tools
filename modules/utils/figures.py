@@ -436,8 +436,7 @@ class figures():
                 set(data.columns)) or not "ALIGNED_COORD" in df.columns:
             raise KeyError("Missing informations to proceed")
             
-        plt.style.use("seaborn-paper")
-        plt.rcParams.update({'font.family':'Montserrat'})
+        plt.style.use("seaborn-paper"); plt.rcParams.update({'font.family':'Montserrat'})
             
         fig, axs = plt.subplots(2, 2, figsize = (16, 9), dpi = 400)
         

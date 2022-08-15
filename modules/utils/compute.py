@@ -18,51 +18,6 @@ from modules.utils.clustering import *
 
 class compute():
     
-    def links(df):
-        """
-        Generate a Series containing , for each track (row), the list of 
-        spots ID that they are composed of, in chronological order.
-        The Series is called self.spotsLinks.
-
-        """
-        
-        # Getting the target for each spots.
-        links = df["TARGET"]
-        
-        # Every Nan means that the spots has no target, so it is the last one.
-        # We will build the lists by going backward.
-        enders = links[links.isnull()].index
-        
-        # Creating the final list and creating the sublists with the enders ID.
-        spotsLinks = [[ID] for ID in enders]
-        
-        # Looping the spots until no backward link is established.
-        unfinished = True
-        
-        while unfinished:
-            unfinished = False
-            
-            for track in spotsLinks:
-                # Trying to add the ID of the previous spots from the last spot
-                # in the sublist.
-                try : 
-                    track.append(links[links == track[-1]].index[0])
-                    # If it works, then there is a connection.
-                    unfinished = True
-                except :
-                    pass
-        
-        # Reversing each sublist.
-        for track in spotsLinks :
-            track.reverse()
-        
-        # Saving the info.
-        spotsLinks = pd.Series(spotsLinks, 
-                               index = [df.loc[idx[0]]["TRACK_ID"] 
-                                        for idx in spotsLinks])
-    
-        return spotsLinks
-    
     def vectors(df, coord_column = "COORD", vect_column = "DISP_VECT",
                 filtering = False, center = None, inplace = True):
         """
@@ -80,19 +35,15 @@ class compute():
         filtering : bool, optional
             If True, use computeClusters() on tracks dataframe and keep the 
             selected ones (F_SELECT = True).
-        aligned : bool, optional
-            If True, compute displacement vectors for all aligned coordinates.
-            See self.alignRotAxis().
     
         """
         ## Creating a pd.Series to store vectors.
         vectors = pd.Series(dtype = "object", name = vect_column)
     
-        
         for ID in df.index :
             try :
                 vectors.loc[ID] = (df.loc[df.loc[ID, "TARGET"], coord_column]-
-                               df.loc[ID, coord_column])
+                                   df.loc[ID, coord_column])
             except :
                 vectors.loc[ID] = np.nan
                 
@@ -100,19 +51,12 @@ class compute():
             if center is None :
                 center = tools.get_centroid(df, coord_column)
             
-            df, clustCent = clustering.compute_clusters(df, 
-                                                        center, 
-                                                        coord_column)
-            # selected = df[df["F_SELECT"]].index
-            # vectors = vectors.loc[selected]
+            df, clustCent = clustering.compute_clusters(df, center, coord_column)
         
         if inplace :
             return pd.concat([df, vectors], axis = 1)
         
-        else :
-            return vectors
-    
-    
+        return vectors 
     
     def drift(df, coord_column = "COORD"):
         """
@@ -123,17 +67,15 @@ class compute():
         TP = df["TP"].unique().tolist()
         TP.sort()
         
-        #data = pd.DataFrame(index = TP)
-        
-        raw_centroid = pd.Series(index = TP, name = "Raw_centroid", 
+        raw_centroid = pd.Series(index = TP, name = "RAW_CENT", 
                                  dtype = "object")
-        drift_distance = pd.Series(index = TP, name = "Drift_distance", 
+        drift_distance = pd.Series(index = TP, name = "DRIFT", 
                                  dtype = "float")
-        drift_vector = pd.Series(index = TP, name = "Drift_vector", 
+        drift_vector = pd.Series(index = TP, name = "DRIFT_VECT", 
                                  dtype = "object")
         
         if "F_SELECT" in df.columns :
-            clust_centroid = pd.Series(index = TP, name = "Cluster_centroid", 
+            clust_centroid = pd.Series(index = TP, name = "CLUST_CENT", 
                                        dtype = "object")
         
         ## Iterating over time point.
@@ -176,6 +118,7 @@ class compute():
             data = pd.concat([raw_centroid, drift_distance, drift_vector], 
                              axis = 1)
         return data
+    
         
     def volume(df, coord_column = "COORD"):
         """
@@ -215,71 +158,60 @@ class compute():
         
         # Converting the volume list to a Series to add time point informations
         volume = pd.Series(volume, index = df["TP"].unique().tolist(), 
-                           name = "volume", dtype = "float")
+                           name = "VOLUME", dtype = "float")
         
         # Adding volume and mean radius to data
         data = pd.concat([data, volume], axis = 1)
-        data["radius"] = [(3*V/(4*np.pi))**(1/3) for V in data["volume"]]
+        data["RADIUS"] = [(3*V/(4*np.pi))**(1/3) for V in data["VOLUME"]]
         
         return data
         
-    def translation(df, coord_column = "COORD",
+        
+    def translation(df, data = None, coord_column = "COORD", 
                     destination = [0, 0, 0], inplace = True):
-        """
-        Translate the coordinates of all points within df to get the
-        centroid of the organoid at [0, 0, 0].
-        The translated coordinates are added to df.
-
-        """
-        # Setting the center coordinates.
-        center = np.array(destination)
         
-        # Creating a DataFrame to store the translated coordinates.
-        coords = pd.Series(name = "TRANS_COORD", 
-                           dtype = "object")
+        dest = pd.Series([np.array(destination)]*len(df["TP"].unique()), 
+                         index = df["TP"].unique())
         
-        # Iterating over time points.
-        for tp in df["TP"].unique().tolist():
-            
-            # Getting the wanted rows.
-            subdf = df[df["TP"] == tp]
-            
-            # Computing the centroid as well as the translation between the 
-            # centroid and the center coordinates.
-            centroid = tools.get_centroid(subdf, coord_column)
-            translation = center-centroid
+        if data is not None :
+            column = "RAW_CENT"
+            if "CLUST_CENT" in data.columns :
+                column = "CLUST_CENT"
                 
-            new_coords = [subdf.loc[ID, coord_column]+translation
-                           for ID in subdf.index]
-            
-            # Adding the translated coordinates to the DataFrame.
-            coords = pd.concat([coords, 
-                                pd.Series(new_coords, index = subdf.index, 
-                                             dtype = "object", 
-                                             name = "TRANS_COORD")], axis = 0)
-            
-        if inplace :
-            return pd.concat([df, coords], axis = 1)
+            translation = data[column] - dest
         
-        else : 
-            return coords
+        else :
+            translation = pd.Series(dtype = "object")
+            
+            for tp in df["TP"].unique():
+                translation.loc[tp] = (
+                    tools.get_centroid(df[df["TP"] == tp], coord_column) -
+                    dest.loc[tp])
+            
+        f_translation = pd.Series(
+            [translation.loc[df.loc[ID, "TP"]] for ID in df.index], 
+            index = df.index)
+        
+        if inplace:
+            df["TRANS_COORD"] = df[coord_column] - f_translation
+            return df
+
+        return df[coord_column] + f_translation
+        
     
-    def rotation_axis(df, vect_column = "DISP_VECT"):
+    def rotation_axis(df, data = None, vect_column = "DISP_VECT"):
         """
         Compute the rotation axis of the dataset, at each time point.
         Update data with the colinear vectors of the rotation axis.
 
         """
-        
-        data = pd.DataFrame(index = df["TP"].unique().tolist())
+        if data is None :
+            data = pd.DataFrame(index = df["TP"].unique().tolist())
             
         # Creating a dataframe to store both vectors forming the PCA plane as
         # well as the crossproduct of those 2.
-        componentVectors = pd.DataFrame(columns = ["V1", "V2", "RA_VECT"], 
+        pca_vectors = pd.DataFrame(columns = ["V1", "V2", "RA_VECT"], 
                                         dtype = "object")
-        
-        # aligned_vectors = pd.Series(dtype = "object",
-        #                             name = "ALIGNED_DISP_VECT")
         
         # Iterating over time points.
         for tp in df["TP"].unique().tolist():
@@ -297,36 +229,16 @@ class compute():
                 V1 = pca.components_[0]
                 V2 = pca.components_[1]
                 
-                # ## Getting the projection of the displacement vectors on the
-                # ## pca space (2D)
-                # vect_2D_arr = pca.transform(arr)
-                
-                # ## Resizing into a 3D array.
-                # vect_3D_arr = np.zeros((vect_2D_arr.shape[0], 3))
-                # vect_3D_arr[:, :2] = vect_2D_arr
-                
-                # ## Transforming it into a series with correct index.
-                # tmp_vectors = pd.Series([vect for vect in vect_3D_arr], 
-                #                         dtype = "object",
-                #                         name = "ALIGNED_DISP_VECT",
-                #                         index = subdf.index)
-                # aligned_vectors = pd.concat([aligned_vectors, tmp_vectors],
-                #                             axis = 0)
-                
                 # Computing the crossproduct.
                 RA = np.cross(V1, V2)
-                # if RA[2] < 0:
-                #     RA = -RA
                 
-                # Saving coordinates to th dataframe.
-                componentVectors.loc[tp] = [V1, V2, RA]
+                # Saving coordinates to the dataframe.
+                pca_vectors.loc[tp] = [V1, V2, RA]
         
-        ## Merging componentVectors with data and adding computed aligned 
-        ## displacement vectors to df.
-        data = pd.concat([data, componentVectors], axis = 1)
-        # df = pd.concat([df, aligned_vectors], axis = 1)
+        ## Adding the PCA vectors to data 
+        data = pd.concat([data, pca_vectors], axis = 1)
         
-        return df, data
+        return data
         
     def alignment(df, data, inplace = True):
         """
@@ -345,7 +257,7 @@ class compute():
         rot_angles = pd.DataFrame(columns = ["Theta_X", "Theta_Y"],
                                    dtype = "float")
         
-        for tp in df["TP"].unique().tolist() :
+        for tp in df["TP"].unique() :
             
             coord = newRA.loc[tp]
             
@@ -425,67 +337,48 @@ class compute():
                     pd.concat([newRA, rot_angles], axis = 1))
         
     def angular_velocity(df, data, inplace = True):
+
+        av_res = pd.DataFrame(index = df.index, 
+                              columns = ["R_VECT", "R", "AV_VECT", 
+                                         "AV_RAD", "AV_DEG"], 
+                              dtype = "object")
         
-        subdf = df.copy()
-        
-        results = pd.DataFrame(dtype = "float", 
-                                columns = ["ANG_VELOCITY_RAD", 
-                                           "ANG_VELOCITY_DEG",
-                                           "TANGENTIAL_VELOCITY", 
-                                           "DISTANCE_TO_RA"])
-        
-        for ID in subdf.index:
-            coord = subdf.loc[ID, "ALIGNED_COORD"].copy()
-            coord[2] = 0
-            dist = np.linalg.norm(coord)
+        for ID in df.index:
+            V1, V2 = data.loc[ df.loc[ID, "TP"], ["V1", "V2"]]
+            coord, displ = df.loc[ID, ["COORD", "DISP_VECT"]]
             
-            disp = subdf.loc[ID, "ALIGNED_DISP_VECT"]
-            
-            
-            if isinstance(coord, np.ndarray) and \
-                isinstance(disp, np.ndarray):
-                    
-                ang_velocity_vect = np.cross(coord, disp)/(dist**2)
-                
-                ang_velocity = np.linalg.norm(ang_velocity_vect)
-                in_deg = ang_velocity*180/np.pi
-                
-                tang_velocity = np.linalg.norm(
-                    np.cross(ang_velocity_vect, coord))
-                
-                res = [ang_velocity, in_deg, tang_velocity, dist]
-                
-            else:
-                res = [np.nan, np.nan, np.nan, dist]
-            
-            results.loc[ID] = res
+            if not np.isnan(displ).any() and \
+                not np.equal(displ, np.zeros(3)).all():
+                r_vect = np.dot(coord, V1)*V1 + np.dot(coord, V2)*V2
+                r = np.linalg.norm(r_vect)
+    
+
+                AV_vect = np.cross(r_vect, displ)/(r**2)
+                AV = np.linalg.norm(AV_vect)
+    
+                av_res.loc[ID] = pd.Series(
+                    [np.round(r_vect, 3), round(r, 3), np.round(AV_vect, 3), 
+                     round(AV, 3), round(AV*180/np.pi, 3)], 
+                    name = ID, index = av_res.columns, dtype = "object")
         
-        velocityByCell = pd.concat([results, df["TP"].to_frame()],
-                                   axis = 1)
-        velocityByCell["ANG_VELOCITY_RAD"] = round(
-            velocityByCell["ANG_VELOCITY_RAD"], 3)
-        
-        velocityByTP = pd.DataFrame(columns = ["Mean_AV", "Std_AV", 
-                                               "Mean_TV", "Std_TV"],
-                              index = data.index, dtype = "float")
+        velocityByTP = pd.DataFrame(columns = ["Mean_AV", "Std_AV"],
+                                    index = data.index, dtype = "float")
         
         for tp in velocityByTP.index:
-            subdf = velocityByCell[velocityByCell["TP"] == tp].copy()
-            av_mean = subdf["ANG_VELOCITY_RAD"].mean()
-            av_std = subdf["ANG_VELOCITY_RAD"].std()
-            tv_mean = subdf["TANGENTIAL_VELOCITY"].mean()
-            tv_std = subdf["TANGENTIAL_VELOCITY"].std()
+            indexes = df[df["TP"] == tp].index
+            subdf = av_res.loc[indexes]
             
-            velocityByTP.loc[tp] = [av_mean, av_std, tv_mean, tv_std]
+            av_mean = subdf["AV_RAD"].mean()
+            av_std = subdf["AV_RAD"].std()
             
-        velocityByCell.drop(columns = "TP", inplace = True)
+            velocityByTP.loc[tp] = [av_mean, av_std]
         
         if inplace :
-            return (pd.concat([df, velocityByCell], axis = 1),
+            return (pd.concat([df, av_res], axis = 1),
                     pd.concat([data, velocityByTP], axis = 1))
         
         else :
-            return velocityByTP, velocityByCell
+            return velocityByTP, av_res
         
     def voxels(df, filepath, offset = 10, outerThres = 0.9):
         """
