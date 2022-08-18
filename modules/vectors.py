@@ -7,6 +7,7 @@ Vector based analyzing components of OAT.
 """
 
 import os
+import numpy as np
 import pandas as pd
 import time
 
@@ -15,12 +16,11 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.lines import Line2D
 import seaborn as sns
 
-from modules.utils.filemanager import *
-from modules.utils.clustering import *
-from modules.utils.compute import *
-from modules.utils.tools import *
-from modules.utils.figures import *
-from modules.import_data import *
+from modules.utils.filemanager import filemanager
+from modules.utils.clustering import clustering
+from modules.utils.compute import compute
+from modules.utils.figures import figures
+from modules.import_data import import_data
 
 class vectors():
     

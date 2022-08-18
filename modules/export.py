@@ -81,7 +81,7 @@ class export():
         subdf = df.copy()
                 
         ## Selecting spots if available and if the user wants it.
-        if clusters_only and "F_SELECT" in subdf.columns :
+        if clusters_only and "CLUSTER_SELECT" in subdf.columns :
             subdf = subdf[subdf["IS_ORGANOID"]]
                  
         ## Removing columns (tracks) containing nan values.

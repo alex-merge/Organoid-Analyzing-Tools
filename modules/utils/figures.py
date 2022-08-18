@@ -13,9 +13,12 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 import seaborn as sns
 
-from modules.utils.tools import *
 
 class figures():
+    """
+    Class providing methods to create figures from the data of OAT.
+    
+    """
     
     def show_data(df, TP, data = None, mode = "default",
                   show = True, savepath = None, close = True,
@@ -75,7 +78,7 @@ class figures():
             raise KeyError("Missing informations to proceed")
         if not isinstance(TP, int) or TP not in df["TP"].unique() :
             raise TypeError("Invalid time point : must be int and must exist")
-        if color_clusters and "F_SELECT" not in df.columns:
+        if color_clusters and "CLUSTER_SELECT" not in df.columns:
             print("Warning : No cluster data found, proceeding without them")
             color_clusters = False
         if show_vectors and modes[mode][1] not in df.columns:
@@ -104,7 +107,7 @@ class figures():
         
         ## Setting the colors and legend in case clusters are shown
         if color_clusters:
-            colors = pd.Series(["green"*val+"orange"*(val == 0) for val in subdf["F_SELECT"]],
+            colors = pd.Series(["green"*val+"orange"*(val == 0) for val in subdf["CLUSTER_SELECT"]],
                                index = subdf.index)
             legend.append(Line2D([0], [0], marker = ">", color = "green", 
                                  label = "Selected vectors", ls = ''))

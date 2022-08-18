@@ -11,264 +11,76 @@ import numpy as np
 import re
 
 from sklearn.cluster import DBSCAN
-from modules.utils.tools import tools
+from modules.utils.centroid import centroid
 
 class clustering():
     
-    def select_cluster(subdf, center, clust_column, coord_column, 
-                       min_cells = 10):
-        """
-        Search for the cluster that is the most likely of being the
-        organoid cluster.
+    def clusters_on_distance(df, coord_column, centroid_method = "gradient"):
         
-        The algorithm compute the centroid of each cluster.
-        
-        Then it computes the distance between each centroid and the center of 
-        the volume.
-        
-        Finally, it returns the cluster that is the closest to the center and
-        that contains more than {min_cells} spots.
-    
-        Parameters
-        ----------
-        subdf : pd.DataFrame
-            Dataframe that contains spots coordinates as well as clustering
-            results.
-        center : np.array 
-            Center coordinates of the whole volume as follow [X, Y, Z].
-        clust_column : str
-            Name of the column that contains cluster IDs.
-        min_cells : int, optional
-            Number of spots a cluster must have to be selected. The default is
-            10.
-    
-        Returns
-        -------
-        selected : pd.Series
-            Index is the ID of the spots, values are booleans.
+        ## Computing the centroid according to the method chosen
+        if centroid_method == "mean":
+            cent_coords = centroid.compute_mean_centroid(df, 
+                                                         coord_column)
+        elif centroid_method == "gradient":
+            cent_coords = centroid.compute_gradient_centroid(df, 
+                                                             coord_column)
+        elif centroid_method == "sampled":
+            cent_coords = centroid.compute_sampled_centroid(df, 
+                                                            coord_column)
             
-    
-        """
-        # Retrieving the ID of the clusters as well as the number of spots they
-        # contains.
-        clustersInfo = subdf[clust_column].value_counts()
-        clustersID = clustersInfo.index
+        distances = pd.Series([ np.linalg.norm(coords-cent_coords) 
+                               for coords in df[coord_column] ], 
+                              index = df.index, name = "Distances")
         
-        # Creating a Series to store the distances between the centroid and the
-        # center.
-        dist = pd.Series(dtype = "float")
+        ## Clustering the distances and saving it as a pd.Series
+        cluster = DBSCAN(eps=5, min_samples=6).fit_predict(distances.to_frame())
+        cluster = pd.Series(cluster, index = df.index, 
+                            name = "DIST_CLUSTER", dtype = "int")
         
-        # Computing the distance for each clusters.
-        for ID in clustersID :
-            centroid = tools.get_centroid(subdf[subdf[clust_column] == ID],
-                                          coord_column)
+        return cluster
+        
+        
+    def compute_clusters(df, coord_column, eps = 7, min_samples = 1,
+                             clustering_on_distance = True,
+                             centroid_method = "gradient",
+                             inplace = True):
+        ## Filtering coordinates to remove nan values
+        filtered_df = df[[coord_column, "TP"]].dropna()
+        
+        TP = filtered_df["TP"].unique()
+        clusters_res = pd.DataFrame(np.zeros((df.shape[0], 2)),
+                                    columns = ["DIST_CLUSTER", "MAIN_CLUSTER"],
+                                    index = df.index, dtype = "int")
+        
+        for tp in TP:
+            sub_df = filtered_df[filtered_df["TP"] == tp]
             
-            dist.loc[ID] = np.linalg.norm(centroid-center)
-        
-        # Sorting from the lowest to the greatest distance.
-        dist.sort_values(ascending = True, inplace = True)
-        
-        # Going through the closest to farthest cluster until it contains more 
-        # than {min_cells} spots. If there are no cluster that meets both 
-        # conditions, we take the first one.
-        selectedClusterID = 0
-        for idx in range(len(dist.index)):
-            if clustersInfo[dist.index[idx]] >= min_cells:
-                selectedClusterID = dist.index[idx]
-                break
-        
-        # Returning the selection result as a pd.Series
-        return subdf[clust_column] == selectedClusterID      
-    
-    def clustering_core(df, center, coord_column, cIter = 100, cSample = 10, 
-                         eps = 40, min_samples = 3, min_cells = 10):
-        """
-        Cluster and select the spots that are more likely to be part of the
-        organoid.
-        
-        First, the algorithm compute the centroid of the organoid by taking 
-        {cSample} random spots and computing their centroid. 
-        It's repeated {cIter} times then it takes the average centroid.
-        
-        A DBSCAN is then runned on the distance between the spots and the 
-        centroid as we expect a spike at a certain distance given all spots 
-        that are part of the organoid should be at the same distance.
-        DBSCAN give the spots for each spikes and we select the right spike by 
-        taking the one that is closer to the centroid.
-        
-        A second DBSCAN is runned on the spots of the selected spikes to 
-        separate the ones that are close but not part of the organoid. The 
-        cluster is also selected by the selectCluster method.  
-    
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Spots to cluster. Same formatting as self.spots expected.
-        center : array 
-            Center coordinates of the whole volume as follow [X, Y, Z].
-        cIter :  int, optional
-            cIter number for the centroid location. The default is 100.
-        cSample : int, optional
-            Number of spots to compute the centroid. The default is 10.
-        eps : int, optional
-            Radius of search for the 2nd DBSCAN algorithm. The default is 40.
-        min_samples : int , optional
-            Min. number of neighbors for the 2nd DBSCAN. The default is 3.
-        min_cells : int, optional
-            Number of spots a cluster must have to be selected. The default is
-            10.
-    
-        Returns
-        -------
-        Results : pd.DataFrame
-            Dataframe where index are the spots ID and columns are :
-                A_CLUSTER : Clusters ID (int) for the first clustering step.
-                A_SELECT : Selected spots for the first clustering (bool).
-                F_CLUSTER : Clusters ID (int) for the 2nd clustering step.
-                F_SELECT : Selected spots for the second clustering (bool).
-    
-        """
-        ## Computing cIter centroids based on subsamples of the main df.
-        centroids = [tools.get_centroid(df.sample(cSample, axis=0), 
-                                        coord_column) 
-                     for k in range(cIter)]
-        
-        ## Getting the median centroid.
-        centroid = np.array([np.median(np.array(centroids)[:, k]) 
-                             for k in range(np.array(centroids).shape[1])])
-        
-        ## Computing the distance between each point and the centroid.
-        distance = pd.Series(dtype = "object", name = "DISTANCE")
-        for ID in df.index:
-            distance[ID] = np.linalg.norm(df.loc[ID, coord_column]-centroid)
-        
-        ## Clustering the distances and saving it as a pd.Series.
-        cluster = DBSCAN(eps=5, min_samples=6).fit_predict(distance.to_frame())
-        cluster = pd.Series(cluster, index = df.index, name = "A_CLUSTER")        
-        
-        # Creating the final dataframe with the first clustering results.
-        Results = cluster.to_frame()
-        
-        # Selecting the cluster based on the clustering.selectCluster method.    
-        selected = clustering.select_cluster(pd.concat([df, cluster], 
-                                                       axis = 1),
-                                             center, 
-                                             clust_column = "A_CLUSTER",
-                                             coord_column = coord_column,
-                                             min_cells = min_cells)
-        selected.name = "A_SELECT"
-        
-        # Adding the selection results to Results dataframe.
-        Results = pd.concat([Results, selected], axis = 1)
-        
-        # Keeping the selected spots for the next clustering step.
-        subdf = df[selected].loc[:, "COORD"].copy()
-        arr = np.array(df[selected][coord_column].tolist())
-        
-        # Clustering the spots.
-        cluster = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(arr)
-        cluster = pd.Series(cluster, index = subdf.index, 
-                            name = "F_CLUSTER")
-        
-        # Merging the clusters ID to the Results dataframe. 
-        Results = pd.concat([Results, cluster], axis = 1)
-        
-        # Selecting the right cluster once again using the same method.
-        selected = clustering.select_cluster(pd.concat([subdf, cluster], 
-                                                       axis = 1),
-                                             center, 
-                                             clust_column = "F_CLUSTER",
-                                             coord_column = "COORD",
-                                             min_cells = min_cells)
-        selected.name = "F_SELECT"
-        
-        # Merging the selection to the Results dataframe.
-        Results = pd.concat([Results, selected], axis = 1)
-        
-        # Filling the NaN values in the 2nd clustering results as some spots
-        # were not computed.
-        Results["F_CLUSTER"].fillna(100, inplace = True)
-        Results["F_SELECT"].fillna(False, inplace = True)
-        
-        return Results, distance, centroids
-        
-    def compute_clusters(df, center, coord_column, eps = 40, min_samples = 3, 
-                         cIter = 1000, cSample = 10, min_cells = 10, 
-                         inplace = True):
-        """
-        Clustering the spots for each frame using the .clusteringEngine() 
-        method.
-    
-        Parameters
-        ----------
-        df : str, optional
-            Name of the dataframe. The default is "spots".
-            It can be either "spots" or "tracks".
-        eps : int, optional
-            See .clusteringEngine() method. The default is 40.
-        min_samples : int , optional
-            See .clusteringEngine() method. The default is 3.
-        cIter :  int, optional
-            See .clusteringEngine() method. The default is 1000.
-        cSample : int, optional
-            See .clusteringEngine() method. The default is 10.
-        min_cells : int, optional
-            See .clusteringEngine() method. The default is 10.
-        rescaling : list, otpional
-            Rescale the spots coordinates on each axis by the given value :
-                [Xratio, Yratio, Zratio].
-            The default is [1, 1, 1].
-    
-        """
-        
-        ## Clustering every spots, frame by frame and adding the results to the
-        ## res temporary datafame.
-        Results = pd.DataFrame(dtype = "float")
-        
-        ## Creating a dataframe to store informations about the distance (see
-        ## clusteringEngine). 
-        clustDist = pd.DataFrame(columns = ["DISTANCE_CENTROID"], 
-                                 dtype = "float")
-        
-        ## Creating a dataframe to save the centroids coordinates that have been
-        ## computed (for debug reasons).
-        clustCent = pd.DataFrame(columns = ["COORD", "TP"], 
-                                 dtype = "object")
-        
-        for tp in df["TP"].unique().tolist():
-            subdf = df[df["TP"] == tp]
+            if clustering_on_distance:
+                res = clustering.clusters_on_distance(sub_df, coord_column)
+                for ID in res.index :
+                    clusters_res.loc[ID, "DIST_CLUSTER"] = int(res.loc[ID])
+                
+            coord_arr = np.array(sub_df[coord_column].tolist())
             
-            clusterResults, dist, cent = clustering.clustering_core(subdf, 
-                                         center, coord_column,
-                                         cIter, cSample, eps, 
-                                         min_samples, min_cells)
+            cluster = DBSCAN(eps = 7, min_samples = 1).fit_predict(coord_arr)
+            cluster = pd.Series(cluster, index = sub_df.index, 
+                                name = "MAIN_CLUSTER", dtype = "int")
             
-            cent = pd.Series(cent, name = "COORD")
-            cent = cent.to_frame()
+            for ID in cluster.index:
+                clusters_res.loc[ID, "MAIN_CLUSTER"] = int(cluster.loc[ID])
             
-            dist = dist.to_frame()
-            dist.columns = ["DISTANCE_CENTROID"]
-            
-            # Adding time points info to the centroid dataframes.
-            cent["TP"] = [tp]*cent.shape[0]
-            
-            Results = pd.concat([Results, clusterResults])
-            clustDist = pd.concat([clustDist, dist])
-            clustCent = pd.concat([clustCent, cent])
+        clusters_res["FINAL_CLUSTER"] = clusters_res["MAIN_CLUSTER"]+clusters_res["DIST_CLUSTER"]
         
-        ## Setting correct type for columns.
-        clustCent["TP"] = clustCent["TP"].astype("int")
-        clustDist["DISTANCE_CENTROID"] = clustDist["DISTANCE_CENTROID"
-                                                   ].astype("float")
+        s_clust_ID = clusters_res["FINAL_CLUSTER"].value_counts().index[0]
+        clusters_res["CLUSTER_SELECT"] = [False]*len(clusters_res.index)
         
-        if inplace :    
-            ## Adding the distance to centroid and cluster infos to 
-            ## the dataframe.
-            df = pd.concat([df, clustDist, Results], axis = 1)
-            return df, clustCent
+        selected_id = clusters_res[clusters_res["FINAL_CLUSTER"] == s_clust_ID].index
+        clusters_res.loc[selected_id, "CLUSTER_SELECT"] = [True]*len(selected_id)
         
-        else :
-            return Results, clustDist, clustCent
+        if inplace :
+            return pd.concat([df, clusters_res], axis = 1)
+        return clusters_res
+        
         
     def select_ROI(subdf, std = 15, eps = 2, min_samples = 3, offset = 5):
         """
@@ -296,6 +108,7 @@ class clustering():
             Best fitting value for the limit of the ROI.
 
         """
+        subdf.dropna(inplace = True)
         # If the standard deviation is small, we don't need to cluster, all
         # spots are given the same clusterID (0).
         if subdf.std() <= std :

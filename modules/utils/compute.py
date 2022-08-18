@@ -13,13 +13,13 @@ import cv2
 from skimage import io
 import numpy as np
 
-from modules.utils.tools import *
-from modules.utils.clustering import *
+from modules.utils.centroid import centroid
+from modules.utils.clustering import clustering
 
 class compute():
     
     def vectors(df, coord_column = "COORD", vect_column = "DISP_VECT",
-                filtering = False, center = None, inplace = True):
+                filtering = False, inplace = True):
         """
         Compute displacement vectors for every spots in the tracks dataframe 
         and add them to it.
@@ -32,207 +32,288 @@ class compute():
         
         Parameters
         ----------
+        df : pandas.DataFrame
+            DataFrame containing spot informations. It must contains the 
+            following columns :
+            - TP : time points
+            - COORD : coordinates as an array for each point.
+        coord_column : str, optional
+            Name of the column containing the coordinates.
+        vect_column : str, optional
+            Name of the column where displacement vectors will be saved.
         filtering : bool, optional
-            If True, use computeClusters() on tracks dataframe and keep the 
-            selected ones (F_SELECT = True).
-    
+            If True, select the spots by clustering them and selecting the one
+            that it most likely to be the organoïd.
+        inplace : bool, optional
+            If True, add the displacement vectors column to the input dataframe
+            and returns it. If False, return the displacement vectors as a 
+            pandas.Series.
+            
+        Returns
+        -------
+        pd.DataFrame or pd.Series
+            Dataframe if inplace is True, Series if not.
+            
         """
-        ## Creating a pd.Series to store vectors.
+        ## Creating a pd.Series to store vectors
         vectors = pd.Series(dtype = "object", name = vect_column)
-    
+        
+        ## Iterating over all spots
         for ID in df.index :
+            ## Computing the difference between the target coordinates and the
+            ## origin coordinates
             try :
                 vectors.loc[ID] = (df.loc[df.loc[ID, "TARGET"], coord_column]-
                                    df.loc[ID, coord_column])
+            
+            ## If not able, then there is no target so set it to nan
             except :
                 vectors.loc[ID] = np.nan
-                
-        if filtering :
-            if center is None :
-                center = tools.get_centroid(df, coord_column)
-            
-            df, clustCent = clustering.compute_clusters(df, center, coord_column)
         
+        ## Adding clustering informations if wanted
+        if filtering :
+            df = clustering.compute_clusters(df, coord_column)
+        
+        ## Return the results
         if inplace :
             return pd.concat([df, vectors], axis = 1)
-        
         return vectors 
     
     def drift(df, coord_column = "COORD"):
         """
         Compute the drift of the organoid between time points.
+        
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            DataFrame containing spot informations. It must contains the 
+            following columns :
+            - TP : time points
+            - COORD : coordinates as an array for each point.
+        coord_column : str, optional
+            Name of the column containing the coordinates.
+            
+        Returns
+        -------
+        pd.DataFrame
+            Dataframe with all drift results.
 
         """
-        
+        ## Retrieving time points and sorting them
         TP = df["TP"].unique().tolist()
         TP.sort()
         
-        raw_centroid = pd.Series(index = TP, name = "CENTROID", 
-                                 dtype = "object")
-        drift_distance = pd.Series(index = TP, name = "DRIFT", 
-                                 dtype = "float")
-        drift_vector = pd.Series(index = TP, name = "DRIFT_VECT", 
-                                 dtype = "object")
+        drift_df = pd.DataFrame(index = TP, 
+                                columns = ["CENTROID", "CLUST_CENTROID", 
+                                           "DRIFT", "DRIFT_VECT"],
+                                dtype = "object") 
         
-        if "F_SELECT" in df.columns :
-            clust_centroid = pd.Series(index = TP, name = "CLUST_CENTROID", 
-                                       dtype = "object")
-        
-        ## Iterating over time point.
+        ## Iterating over time point
         for tp in TP:
             
             subdf = df[df["TP"] == tp]
 
-            ## Getting the centroid.
-            raw_centroid[tp] = tools.get_centroid(subdf, coord_column)
-            
+            ## Getting the gradient centroid
+            drift_df.loc[tp, "CENTROID"] = centroid.compute_gradient_centroid(subdf, coord_column)
+            ## Trying to compute the cluster's centroid
             try :
-                clust_centroid[tp] = tools.get_centroid(subdf[subdf["F_SELECT"]],
-                                                        coord_column)
-            
+                drift_df.loc[tp, "CLUST_CENTROID"] = centroid.compute_mean_centroid(
+                    subdf[subdf["CLUSTER_SELECT"]], coord_column)
             except :
-                pass
+                None
             
-            # If we're not at the first file, we can compute the drift vector 
-            # between the centroids from the n-1 and n time point.
-            # The drift vector is saved with the n-1 time point index. 
+            ## Computing the drift starting at tp > 1
             if tp >= 1 :
-                
-                try : 
-                    drift_vector[tp-1] = clust_centroid[tp]-clust_centroid[tp-1]
+                if not drift_df["CLUST_CENTROID"].dropna().empty : 
+                    drift_df.loc[tp-1, "DRIFT_VECT"] = (
+                        drift_df.loc[tp, "CLUST_CENTROID"] - drift_df.loc[tp-1, "CLUST_CENTROID"])
                     
+                else :
+                    drift_df.loc[tp-1, "DRIFT_VECT"] = (
+                        drift_df.loc[tp, "CENTROID"]-drift_df.loc[tp-1, "CENTROID"])
                 
-                except :
-                    drift_vector[tp-1] = raw_centroid[tp]-raw_centroid[tp-1]
-                
-                drift_distance[tp-1] = np.linalg.norm(drift_vector[tp-1])
+                ## Computing the drift distance
+                drift_df.loc[tp-1, "DRIFT"] = round(
+                    np.linalg.norm(drift_df.loc[tp-1, "DRIFT_VECT"]), 2)
         
-        drift_distance = round(drift_distance, 2)
-        
-        try :
-            data = pd.concat([raw_centroid, clust_centroid, drift_distance,
-                              drift_vector], 
-                             axis = 1)
-        
-        except : 
-            data = pd.concat([raw_centroid, drift_distance, drift_vector], 
-                             axis = 1)
-        return data
+        return drift_df
     
         
     def volume(df, coord_column = "COORD"):
         """
-        Use the Convex Hull algorithm of scipy to get the cells that are 
-        forming the outershell as well as the volume of the organoid. 
-
-        """       
-        data = pd.DataFrame(index = df["TP"].unique().tolist())
+        Use the convex hull algorithm to compute the volume of the organoid at 
+        each time point .
         
-        # Creating 2 buffer lists.
-        volume, spots = [], []
-        
-        # Iterating over files.
-        for tp in df["TP"].unique().tolist():
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe containing informations for each spots. It must contains 
+            the following columns :
+                - TP
+                - COORD : column with coordinates as array.
+        coord_column : str, optional
+            Name of the column which contains the coordinates.
             
-            # Getting the sub dataframe.
+        Returns
+        -------
+        pandas.DataFrame
+            Dataframe containing the volume and mean radius per time points. 
+
+        """
+        TP = df["TP"].unique().tolist()
+        data = pd.DataFrame(index = TP, columns = ["VOLUME"], dtype = "float")
+        
+        ## Iterating over time points
+        for tp in TP:
+            
+            ## Getting the sub dataframe
             subdf = df[df["TP"] == tp]
             
-            # Using the Convex Hull algorithm.
+            ## Using the Convex Hull algorithm
             hull = ConvexHull(np.array(subdf["COORD"].tolist()))
             
-            # Saving the volume and the spots that are the outershell.
-            volume.append(hull.volume) 
-            spots += list(subdf.iloc[hull.vertices.tolist()].index)
-            
-        # Setting the bool value for the question : is this spot part of the 
-        # outershell ?
-        isHull = pd.Series(name = "isHull", dtype="bool")
-        for idx in df.index :
-            if idx in spots:
-                isHull.loc[idx] = True
-            else :
-                isHull.loc[idx] = False
+            ## Saving the volume info
+            data.loc[tp, "VOLUME"] = round(hull.volume, 2) 
                 
-        # Merging the bool isHull to df.
-        df = pd.concat([df, isHull], axis = 1)
-        
-        # Converting the volume list to a Series to add time point informations
-        volume = pd.Series(volume, index = df["TP"].unique().tolist(), 
-                           name = "VOLUME", dtype = "float")
-        
-        # Adding volume and mean radius to data
-        data = pd.concat([data, volume], axis = 1)
-        data["RADIUS"] = [(3*V/(4*np.pi))**(1/3) for V in data["VOLUME"]]
+        ## Adding the mean radius to data
+        data["RADIUS"] = [round((3*V/(4*np.pi))**(1/3), 2) for V in data["VOLUME"]]
         
         return data
         
         
     def translation(df, data = None, coord_column = "COORD", 
-                    destination = [0, 0, 0], inplace = True):
-        
-        dest = pd.Series([np.array(destination)]*len(df["TP"].unique()), 
+                    destination = np.zeros(3), inplace = True):
+        """
+        Translating coordinates of each spots to get the centroid to the 
+        destination.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe containing informations for each spots. It must contains 
+            the following columns :
+                - TP
+                - COORD : column with coordinates as array.
+        data : pandas.DataFrame, optional
+            Dataframe containing informations for each time points.
+            If provided, it must contains one of the following columns :
+                - CENTROID
+                - CLUST_CENTROID
+            The default is None.
+        coord_column : str, optional
+            Name of the column which contains the coordinates . 
+            The default is "COORD".
+        destination : np.ndarray, optional
+            Destination of the centroid. The default is (0, 0, 0).
+        inplace : bool, optional
+            If True, add the displacement vectors column to the input dataframe
+            and returns it. If False, return the displacement vectors as a 
+            pandas.Series.
+            The default is True.
+
+        Returns
+        -------
+        pandas.DataFrame or pandas.Series
+            Input dataframe containing the "CENTRD_COORD". Or, Series containing
+            the translated coordinates.
+
+        """
+        ## Creating a Series of the same length as the dataframe, 
+        ## which contains the destination of the centroid
+        dest = pd.Series([destination]*len(df["TP"].unique()), 
                          index = df["TP"].unique())
         
+        ## If data is provided, using the more precise centroid
         if data is not None :
             column = "CENTROID"
-            if "CLUST_CENTROID" in data.columns :
+            if "CLUST_CENTROID" in data.columns and not data["CLUST_CENTROID"].dropna().empty:
                 column = "CLUST_CENTROID"
-                
+            ## Translation is the vectors from the destination to the centroid,
+            ## for each time points
             translation = data[column] - dest
         
+        ## Else, computing the gradient centroid
         else :
             translation = pd.Series(dtype = "object")
             
             for tp in df["TP"].unique():
                 translation.loc[tp] = (
-                    tools.get_centroid(df[df["TP"] == tp], coord_column) -
+                    centroid.compute_gradient_centroid(df[df["TP"] == tp], coord_column) -
                     dest.loc[tp])
-            
+        
+        ## Creating a series which contains the translation for each points 
+        ## according to their time points
         f_translation = pd.Series(
             [translation.loc[df.loc[ID, "TP"]] for ID in df.index], 
             index = df.index)
         
+        ## Computing the translation and returning as desired
         if inplace:
             df["CENTRD_COORD"] = df[coord_column] - f_translation
             return df
-
         return df[coord_column] + f_translation
         
     
     def rotation_axis(df, data = None, vect_column = "DISP_VECT"):
         """
         Compute the rotation axis of the dataset, at each time point.
-        Update data with the colinear vectors of the rotation axis.
+        Update data with the rotaion axis vectors as well as the PCA plane 
+        directory vectors.
+        
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe containing informations for each spots. It must contains 
+            the following columns :
+                - TP
+                - DISP_VECT
+        data : pandas.DataFrame, optional
+            Dataframe containing informations for each time points.
+            The default is None.
+        vect_column : str, optional
+            Name of the column containing the displacement vectors.
+            The default is "DISP_VECT".
+            
+        Returns
+        -------
+        pandas.DataFrame
+            Dataframe which contains informations for each time points.
+            Update data if provided.
+                
 
         """
+        ## Creating data if not provided
         if data is None :
             data = pd.DataFrame(index = df["TP"].unique().tolist())
             
-        # Creating a dataframe to store both vectors forming the PCA plane as
-        # well as the crossproduct of those 2.
+        ## Creating a dataframe to store both vectors forming the PCA plane as
+        ## well as the cross product of those 2
         pca_vectors = pd.DataFrame(columns = ["V1", "V2", "RA_VECT"], 
                                         dtype = "object")
         
-        # Iterating over time points.
+        ## Iterating over time points.
         for tp in df["TP"].unique().tolist():
             subdf = df[df["TP"] == tp][vect_column]
             subdf = subdf.dropna()
             
             ## Checking if the dataframe is not empty.
             if not subdf.empty:   
-                
+                ## Converting displacement vectors as a big array where each
+                ## row is a vector and each column is the coordinate for a 
+                ## given axis
                 arr = np.array(subdf.tolist())
                 
                 pca = PCA(n_components = 2)
                 pca.fit(arr)
                 
+                ## Getting the 2 vectors forming the PCA plane
                 V1 = pca.components_[0]
                 V2 = pca.components_[1]
                 
-                # Computing the crossproduct.
+                ## Computing the cross product
                 RA = np.cross(V1, V2)
                 
-                # Saving coordinates to the dataframe.
+                ## Saving coordinates to the dataframe
                 pca_vectors.loc[tp] = [V1, V2, RA]
         
         ## Adding the PCA vectors to data 
@@ -245,24 +326,43 @@ class compute():
         Rotate the points of df to get the axis of rotation aligned 
         with the Z axis. New coordinates are saved in df in 
         "Aligned_..." columns.
+        
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe containing informations for each spots. It must contains 
+            the following columns :
+                - TP
+                - CENTRD_COORD
+                - DISP_VECT
+        data : pandas.DataFrame
+            Dataframe containing informations for each time points. It must 
+            contains the following columns :
+                - RA_VECT
+            The default is None.
+        inplace : bool, optional
+            If True, add the displacement vectors column to the input dataframe
+            and returns it. If False, return the displacement vectors as a 
+            pandas.Series.
+            The default is True.
 
         """
-
+        ## Retrieving required informations
         newCoords = df.loc[:, "CENTRD_COORD"].copy()
-        
         newRA = data.loc[:, "RA_VECT"].copy()
-        
         new_Disp = df.loc[:, "DISP_VECT"].copy()
         
+        ## Creating a dataframe to hold rotation angle for each time point
         rot_angles = pd.DataFrame(columns = ["Theta_X", "Theta_Y"],
                                    dtype = "float")
         
+        ## Iterating over time points
         for tp in df["TP"].unique() :
-            
+            ## Retrieving coordinates for the given time point
             coord = newRA.loc[tp]
             
-            if not isinstance(coord, np.ndarray) and tp != 0:
-                coord = newRA.loc[tp-1]
+            # if not isinstance(coord, np.ndarray) and tp != 0:
+            #     coord = newRA.loc[tp-1]
             
             theta_x = np.arctan2(coord[1], coord[2])#%np.pi
             rot_angles.loc[tp, "Theta_X"] = theta_x
