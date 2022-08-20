@@ -2,18 +2,17 @@
 """
 Export methods for OAT.
 
-@author: Alex-932
+@author: alex-merge
 @version: 0.7
 """
 
 import numpy as np
-from scipy.io import savemat
-import re
 import pandas as pd
 
-from modules.utils.filemanager import filemanager
-
 class export():
+    """
+    Set of methods to export OAT results.
+    """
     
     def to_csv(df, savepath):
         """
@@ -61,7 +60,7 @@ class export():
         outdf.to_csv(savepath)
     
     def to_vtk_polydata(df, savepath, column_name = "COORD",
-                        TP = None, clusters_only = False):
+                        clusters_only = False):
         """
         Export the given coord column in the given dataframe 
         to a points type .vtk for visualization in paraview.
@@ -69,56 +68,68 @@ class export():
 
         Parameters
         ----------
-        filename : str or list
-            Name of the image file or list of the name of the image files. 
-            Do not include the '.tif'
-
-        organoid : bool, optional (default is False)
-            True : Export only the spots that are supposed to be in the 
-            organoid.        
+        df : pandas.DataFrame
+            Dataframe which contains coordinates columns.
+        savepath : str
+            Fullpath for the save file.
+        column_name : str, optional
+            Name of the column to export. The default is "COORD".
+        clusters_only : bool, optional
+            If True, export the spots that have been selected by the clustering.
+            The default is False.
 
         """
         subdf = df.copy()
-                
-        ## Selecting spots if available and if the user wants it.
+        
+        """
+        Preparing data.
+        """
+        ## Selecting spots if available and if the user wants it
         if clusters_only and "CLUSTER_SELECT" in subdf.columns :
             subdf = subdf[subdf["IS_ORGANOID"]]
                  
-        ## Removing columns (tracks) containing nan values.
+        ## Removing columns (tracks) containing nan values
         subdf.dropna(axis = "columns", inplace = True)
         
-        ## Getting the number of columns i.e. the number of different tracks.
+        ## Getting the number of columns i.e. the number of different tracks
         Tracks = subdf["TRACK_ID"].unique()
         
-        ## Getting the number of points per tracks.
+        ## Getting the number of points per tracks
         TP = subdf["TP"].unique()
         
         x_df = pd.DataFrame(dtype = "float", columns = Tracks, index = TP)
         y_df = pd.DataFrame(dtype = "float", columns = Tracks, index = TP)
         z_df = pd.DataFrame(dtype = "float", columns = Tracks, index = TP)
         
+        ## Iterating over time points
         for tp in TP:
             for track in Tracks:
                 subset = subdf[subdf["TP"] == tp]
                 subset = subset[subset["TRACK_ID"] == track]
                 
+                ## Checking if the subset is empty
                 if not subset.empty:
                     x_df.loc[tp, track] = subset[column_name][0][0]
                     y_df.loc[tp, track] = subset[column_name][0][1]
                     z_df.loc[tp, track] = subset[column_name][0][2]
-                    
+                
+                ## Otherwise, filling with nan values
                 else :
                     x_df.loc[tp, track] = np.nan
                     y_df.loc[tp, track] = np.nan
                     z_df.loc[tp, track] = np.nan
-                    
+        
+        ## Replacing nan values with the last known position.
         x_df.fillna(method = "ffill", inplace = True)
         x_df.fillna(method = "bfill", inplace = True)
         y_df.fillna(method = "ffill", inplace = True)
         y_df.fillna(method = "bfill", inplace = True)
         z_df.fillna(method = "ffill", inplace = True)
         z_df.fillna(method = "bfill", inplace = True)        
-                
+        
+        """
+        Writing the file.
+        """
         stream = open(savepath, "w")
         
         ## Writing the file specifications
@@ -129,7 +140,7 @@ class export():
         stream.write("POINTS "+str(len(Tracks)*len(TP))+" double\n")
         
         ## For every tracks and every timepoint (row), we write the coordinates 
-        ## of the given point in the file.
+        ## of the given point in the file
         for pt in Tracks:
             for tp in TP:
                 X = x_df.loc[tp, pt] 
@@ -137,7 +148,7 @@ class export():
                 Z = z_df.loc[tp, pt]
                 stream.write(str(X)+" "+str(Y)+" "+str(Z)+"\n")
                     
-        ## Writing the number of lines and the number of points.
+        ## Writing the number of lines and the number of points
         stream.write("LINES "+str(len(Tracks))+" "+str((len(TP)+1)*len(Tracks))+"\n")
         stream.write("\n")
         
@@ -159,7 +170,7 @@ class export():
              for tp in range(len(TP)):
                 stream.write(str(tp)+" \n")
                 
-        ## Closing the file and saving it.        
+        ## Closing the file and saving it       
         stream.close()
 
         
@@ -167,23 +178,31 @@ class export():
         """
         Writer to convert a series of coordinates into a points .vtk file.
 
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe which contains coordinates columns.
+        savepath : str
+            Fullpath for the save file.
+
         """
-        #Setting the name of the file and opening it.
+        ## Setting the name of the file and opening it
         stream = open(savepath, "w")
         
-        #Getting the number of columns i.e. the number of different tracks.
+        ## Getting the number of columns i.e. the number of different tracks
         points_nb = len(df['X'].index)
         stream.write("# vtk DataFile Version 2.0\n")
-        stream.write("PIV3D Trajectories\n")
+        stream.write("PIV3D Points\n")
         stream.write("ASCII\n")
         stream.write("DATASET POLYDATA\n")
         stream.write("POINTS "+str(points_nb)+" double\n")
         
-        #For every tracks and every timepoint (row), we write the coordinates 
-        #of the given point in the file.
+        ## For every tracks and every timepoint (row), we write the coordinates 
+        ## of the given point in the file
         for pt in range(points_nb):
             stream.write(str(df['X'].iloc[pt])+" "+\
                        str(df['Y'].iloc[pt])+" "+\
                        str(df['Z'].iloc[pt])+"\n")
-        #Closing the file and saving it.
+                
+        ## Closing the file and saving it.
         stream.close()        

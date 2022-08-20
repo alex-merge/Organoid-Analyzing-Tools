@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Plotting figures methods for OAT.
+Figures drawing methods for OAT.
 
-@author: Alex-932
+@author: alex-merge
 @version: 0.7
 """
 import pandas as pd
@@ -16,8 +16,7 @@ import seaborn as sns
 
 class figures():
     """
-    Class providing methods to create figures from the data of OAT.
-    
+    Set of methods to create figures from OAT results.
     """
     
     def show_data(df, TP, data = None, mode = "default",
@@ -69,9 +68,9 @@ class figures():
             If True, try to draw displacement vectors. The default is True.
 
         """
-        modes = {"default": ["COORD", "DISP_VECT", "RA_VECT"],
-                 "centered": ["CENTRD_COORD", "DISP_VECT", "RA_VECT"],
-                 "aligned": ["ALIGNED_COORD", "ALIGNED_DISP_VECT", "ALIGNED_RA_VECT"]}
+        modes = {"default": ["COORD", "DISP_VECT", "RA_VECT", "CENTROID"],
+                 "centered": ["CENTRD_COORD", "DISP_VECT", "RA_VECT", "CENTRD_CENTROID"],
+                 "aligned": ["ALIGNED_COORD", "ALIGNED_DISP_VECT", "ALIGNED_RA_VECT", "CENTRD_CENTROID"]}
         
         ## Checking if all data are available
         if not set(modes[mode][:2]).issubset(set(df.columns)) :
@@ -128,22 +127,22 @@ class figures():
         ## Adding the centroid if wanted
         if show_centroid:
             try :
-                centroid = data.loc[TP, "CENTROID"]
+                centroid = data.loc[TP, "CLUST_CENTROID"]
+                ax.scatter(centroid[0], centroid[1], centroid[2], color = "green",
+                           marker = "^")
+                legend.append(Line2D([0], [0], marker = "^", color = "green", 
+                                     label = "Cluster's centroid", ls = ''))
+            except :
+                None
+            try :
+                centroid = data.loc[TP, modes[mode][3]]
                 ax.scatter(centroid[0], centroid[1], centroid[2], color = "red",
                            marker = "^")
                 legend.append(Line2D([0], [0], marker = "^", color = "red", 
                                      label = "Centroid", ls = ''))
             except :
                 None
-            try :
-                centroid = data.loc[TP, "CLUST_CENTROID"]
-                ax.scatter(centroid[0], centroid[1], centroid[2], color = "green",
-                           marker = "^")
-                legend.append(Line2D([0], [0], marker = "^", color = "green", 
-                                     label = "CLuster's centroid", ls = ''))
-            except :
-                None
-                
+                 
             ## Showing rotation axis
             if show_rot_axis:
                 RA_vect = data.loc[TP, modes[mode][2]]

@@ -2,18 +2,71 @@
 """
 Methods to compute the centroid from a dataset.
 
-@author: Alex-932
+@author: alex-merge
+@version: 0.7
 """
 import numpy as np
 from random import randrange
 
 class centroid():
+    """
+    Set of methods to compute the centroid for OAT.
+    """
     
     def compute_distance_sum(point, arr):
+        """
+        Return the sum of the distance between all spots and the point. 
+
+        Parameters
+        ----------
+        point : np.ndarray
+            Point to compute the distance from.
+        arr : np.ndarray
+            Array containing all the spots coordinates.
+            Each row contains the spot coordinates.
+            Each column contains the coordinates on a given axis.
+
+        Returns
+        -------
+        float
+            Sum of the distances.
+
+        """
         return sum([np.linalg.norm( arr[k, :]-point ) for k in range(arr.shape[0])])
     
+    
     def compute_gradient_centroid(df, coord_column, searching_spd = 1, 
-                                  threshold = 0.1, iteration = 100):
+                                  threshold = 0.05, iteration = 100):
+        """
+        Compute the centroid of the given coordinates using a gradient slope.
+        
+        First we take a random point, compute its distance from all spots.
+        Then we compute the variation of this distance on each axis and go 
+        where the distance decrease.
+        
+        This is reiterated several times to make sure we get the global minima.
+        
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe which contain the coordinates of the spots.
+        coord_column : str
+            Name of the column which contains the coordinates.
+        searching_spd : int, optional
+            Speed at which the coordinates goes down the gradient. 
+            The default is 1.
+        threshold : float, optional
+            Stop the search if the distance decrease if less than the threshold. 
+            The default is 0.05.
+        iteration : int, optional
+            Number of iterations. The default is 100.
+
+        Returns
+        -------
+        cent_coord : numpy.ndarray
+            Coordinates of the centroid.
+
+        """
         ## Creating a list to store results as follow :
         ##  [ [sum of the distance, coordinates array of the point], ... ]
         computed_coords = []
@@ -24,7 +77,7 @@ class centroid():
         
         arr = np.array(df[coord_column].dropna().tolist())
         
-        ## Looping over the number of iteration wanted.
+        ## Looping over the number of iteration wanted
         for step in range(iteration):
             
             ## Randomly selecting a point within the min/max on each axis
@@ -38,23 +91,27 @@ class centroid():
             already computed sums.
             """
             while (len(computed_coords) >= 3 and 
-                   abs(computed_coords[-1][0] - computed_coords[-2][0]) >= threshold and
-                   computed_coords[-1][0] != computed_coords[-3][0]) \
+                abs(computed_coords[-1][0] - computed_coords[-2][0]) >= threshold \
+                and computed_coords[-1][0] != computed_coords[-3][0]) \
                 or len(computed_coords) < 3:
                 
                 distance = centroid.compute_distance_sum(point, arr)
                 computed_coords.append([distance, point])
                 
-                ## Getting variation of the distance by slightly varying coordinates. 
-                delta_dist = [distance - centroid.compute_distance_sum(point+h[axis], arr)
+                ## Getting variation of the distance by slightly varying coordinates 
+                delta_dist = [distance - centroid.compute_distance_sum(point+h[axis], 
+                                                                       arr)
                               for axis in range(3)]
                 
-                point += np.array([searching_spd*int((k/abs(k))) for k in delta_dist])
-            
+                point += np.array([searching_spd*int(round((k/abs(k)), 0)) 
+                                   for k in delta_dist])
+        
+        ## Getting the minimum then the coordinates where this minimum is achieved.
         minimum = min([value[0] for value in computed_coords])
         cent_coord = [value[1] for value in computed_coords if value[0] == minimum][0]
         
         return cent_coord
+    
     
     def compute_mean_centroid(df, coord_column):
         """
@@ -70,7 +127,7 @@ class centroid():
 
         Returns
         -------
-        cent_coord : np.ndarray
+        cent_coord : numpy.ndarray
             Coordinates of the centroid as an array.
 
         """
@@ -82,6 +139,7 @@ class centroid():
         cent_coord = np.array([arr[:, ax].mean() for ax in range(arr.shape[1])])
         
         return cent_coord
+    
     
     def compute_sampled_centroid(df, coord_column, n_sample = 10, iteration = 100):
         """
@@ -104,11 +162,12 @@ class centroid():
 
         Returns
         -------
-        np.ndarray
+        numpy.ndarray
             Coordinates of the centroid as an array.
 
         """
-        centroids = [centroid.compute_mean_centroid(df.sample(n_sample, axis = 0), coord_column)
+        centroids = [centroid.compute_mean_centroid(df.sample(n_sample, axis = 0), 
+                                                    coord_column)
                      for i in range(iteration)]
         centroids_arr = np.array(centroids)
         

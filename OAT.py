@@ -3,7 +3,7 @@
 organoid_tracking_tools (OAT) is a set of methods that integrates FIJI's 
 Trackmate csv files output to process cell displacement within an organoid.
 
-@author: Alex-932
+@author: alex-merge
 @version: 0.7
 """
 

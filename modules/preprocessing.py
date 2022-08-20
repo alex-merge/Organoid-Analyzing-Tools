@@ -2,25 +2,18 @@
 """
 Preprocessing part analyzing component of OAT.
 
-@author: Alex-932
+@author: alex-merge
 @version: 0.7
 """
 
-import os
 import time
 import pandas as pd
 import re
 import numpy as np
 
-import matplotlib.pyplot as plt 
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib.lines import Line2D
-
 from modules.utils.filemanager import filemanager
 from modules.utils.clustering import clustering
 from modules.utils.image import image
-from modules.utils.tools import tools
-from modules.utils.figures import figures
 from modules.import_data import import_data
 
 class preprocessing():

@@ -2,15 +2,13 @@
 """
 Compute methods for OAT.
 
-@author: Alex-932
+@author: alex-merge
 @version: 0.7
 """
 
 import pandas as pd
 from scipy.spatial import ConvexHull
 from sklearn.decomposition import PCA
-import cv2
-from skimage import io
 import numpy as np
 
 from modules.utils.centroid import centroid
@@ -181,7 +179,7 @@ class compute():
         return data
         
         
-    def translation(df, data = None, coord_column = "COORD", 
+    def translation(df, data, coord_column = "COORD", 
                     destination = np.zeros(3), inplace = True):
         """
         Translating coordinates of each spots to get the centroid to the 
@@ -194,12 +192,11 @@ class compute():
             the following columns :
                 - TP
                 - COORD : column with coordinates as array.
-        data : pandas.DataFrame, optional
+        data : pandas.DataFrame
             Dataframe containing informations for each time points.
-            If provided, it must contains one of the following columns :
+            It must contains one of the following columns :
                 - CENTROID
                 - CLUST_CENTROID
-            The default is None.
         coord_column : str, optional
             Name of the column which contains the coordinates . 
             The default is "COORD".
@@ -220,18 +217,18 @@ class compute():
         """
         ## Creating a Series of the same length as the dataframe, 
         ## which contains the destination of the centroid
-        dest = pd.Series([destination]*len(df["TP"].unique()), 
-                         index = df["TP"].unique())
+        data["CENTRD_CENTROID"] = pd.Series([destination]*len(df["TP"].unique()), 
+                                            index = df["TP"].unique())
         
-        ## If data is provided, using the more precise centroid
-        if data is not None :
+        ## Retrieving info for the more detailled column available
+        if "CLUST_CENTROID" in data.columns and not data["CLUST_CENTROID"].dropna().empty:
+            column = "CLUST_CENTROID"
+            translation = data[column] - data["CENTRD_CENTROID"]
+            
+        elif "CENTROID" in data.columns and not data["CENTROID"].dropna().empty:
             column = "CENTROID"
-            if "CLUST_CENTROID" in data.columns and not data["CLUST_CENTROID"].dropna().empty:
-                column = "CLUST_CENTROID"
-            ## Translation is the vectors from the destination to the centroid,
-            ## for each time points
-            translation = data[column] - dest
-        
+            translation = data[column] - data["CENTRD_CENTROID"]
+            
         ## Else, computing the gradient centroid
         else :
             translation = pd.Series(dtype = "object")
@@ -239,7 +236,7 @@ class compute():
             for tp in df["TP"].unique():
                 translation.loc[tp] = (
                     centroid.compute_gradient_centroid(df[df["TP"] == tp], coord_column) -
-                    dest.loc[tp])
+                    data["CENTRD_CENTROID"].loc[tp])
         
         ## Creating a series which contains the translation for each points 
         ## according to their time points
@@ -250,7 +247,7 @@ class compute():
         ## Computing the translation and returning as desired
         if inplace:
             df["CENTRD_COORD"] = df[coord_column] - f_translation
-            return df
+            return df, data
         return df[coord_column] + f_translation
         
     
@@ -321,7 +318,8 @@ class compute():
         
         return data
         
-    def alignment(df, data, inplace = True):
+    def alignment(df, data, coord_column = "CENTRD_COORD", 
+                  vect_column = "DISP_VECT", inplace = True):
         """
         Rotate the points of df to get the axis of rotation aligned 
         with the Z axis. New coordinates are saved in df in 
@@ -339,18 +337,30 @@ class compute():
             Dataframe containing informations for each time points. It must 
             contains the following columns :
                 - RA_VECT
-            The default is None.
+        coord_column : str, optional
+            Name of the column containing the coordinates.
+            The default is "CENTRD_COORD".
+        vect_column : str, optional
+            Name of the column containing the displacement vectors.
+            The default is "DISP_VECT".
         inplace : bool, optional
             If True, add the displacement vectors column to the input dataframe
             and returns it. If False, return the displacement vectors as a 
             pandas.Series.
             The default is True.
+            
+        Returns
+        -------
+        pandas.DataFrame
+            If inplace : return both input dataframes with computed coordinates.
+            If not inplace : return coordinates as a Series and angles as a 
+            dataframe.
 
         """
         ## Retrieving required informations
-        newCoords = df.loc[:, "CENTRD_COORD"].copy()
-        newRA = data.loc[:, "RA_VECT"].copy()
-        new_Disp = df.loc[:, "DISP_VECT"].copy()
+        new_coords = df.loc[:, coord_column].copy()
+        new_RA = data.loc[:, "RA_VECT"].copy()
+        new_disp = df.loc[:, vect_column].copy()
         
         ## Creating a dataframe to hold rotation angle for each time point
         rot_angles = pd.DataFrame(columns = ["Theta_X", "Theta_Y"],
@@ -358,55 +368,56 @@ class compute():
         
         ## Iterating over time points
         for tp in df["TP"].unique() :
-            ## Retrieving coordinates for the given time point
-            coord = newRA.loc[tp]
+            ## Retrieving vector for the given time point
+            coord = new_RA.loc[tp]
             
-            # if not isinstance(coord, np.ndarray) and tp != 0:
-            #     coord = newRA.loc[tp-1]
+            ## Use the last known rotation axis 
+            if not isinstance(coord, np.ndarray) and tp != 0:
+                coord = new_RA.loc[tp-1]
             
-            theta_x = np.arctan2(coord[1], coord[2])#%np.pi
+            ## Computing rotation angle on the X axis
+            theta_x = np.arctan2(coord[1], coord[2])
             rot_angles.loc[tp, "Theta_X"] = theta_x
             
-            # Applying X rotation
+            ## Applying X rotation
             rot_x = np.array([[1, 0, 0],
                               [0, np.cos(theta_x), -np.sin(theta_x)],
                               [0, np.sin(theta_x), np.cos(theta_x)]])
             
             coord = np.matmul(rot_x, coord)
             
-            theta_y = -np.arctan2(coord[0], coord[2])#%np.pi
+            ## Computing rotation angle on the Y axis
+            theta_y = -np.arctan2(coord[0], coord[2])
             rot_angles.loc[tp, "Theta_Y"] = theta_y
             
-            # Applying Y rotation
+            ## Applying Y rotation
             rot_y = np.array([[np.cos(theta_y), 0, np.sin(theta_y)],
                               [0, 1, 0],
                               [-np.sin(theta_y), 0, np.cos(theta_y)]])
             
             coord = np.matmul(rot_y, coord)
             
-            newRA.loc[tp] = coord
+            new_RA.loc[tp] = coord
         
-        newRA.name = "ALIGNED_RA_VECT"
+        new_RA.name = "ALIGNED_RA_VECT"
         
-        for ID in newCoords.index :
-            
-            coord = newCoords.loc[ID]            
+        ## Iterating over time points
+        for ID in new_coords.index :
+            ## Retrieving the coordinates of the spot
+            coord = new_coords.loc[ID]            
             
             tp = df.loc[ID, "TP"]
             
             ## Rotation on the x axis
             theta_x = rot_angles.loc[tp, "Theta_X"]
-            
             rot_x = np.array([[1, 0, 0],
                               [0, np.cos(theta_x), -np.sin(theta_x)],
                               [0, np.sin(theta_x), np.cos(theta_x)]])
             
             coord = np.matmul(rot_x, coord)
             
-            
-            theta_y = rot_angles.loc[tp, "Theta_Y"]
-            
             ## Rotation on the y axis
+            theta_y = rot_angles.loc[tp, "Theta_Y"]
             rot_y = np.array([[np.cos(theta_y), 0, np.sin(theta_y)],
                               [0, 1, 0],
                               [-np.sin(theta_y), 0, np.cos(theta_y)]])
@@ -414,127 +425,114 @@ class compute():
             coord = np.matmul(rot_y, coord)
             
             ## Rotating the displacement vectors
-            disp = new_Disp.loc[ID]
+            disp = new_disp.loc[ID]
             if isinstance(disp, np.ndarray):
                 disp = np.matmul(rot_x, disp)
                 disp = np.matmul(rot_y, disp)
-            
             else:
                 disp = np.nan
             
-            newCoords.loc[ID] = coord
-            new_Disp.loc[ID] = disp
+            ## Replacing the old coordinates
+            new_coords.loc[ID] = coord
+            new_disp.loc[ID] = disp
         
-        newCoords.name = "ALIGNED_COORD"
-        new_Disp.name = "ALIGNED_DISP_VECT"
+        new_coords.name = "ALIGNED_COORD"
+        new_disp.name = "ALIGNED_DISP_VECT"
 
         if inplace :
-            return (pd.concat([df, newCoords, new_Disp], axis = 1), 
-                    pd.concat([data, newRA, rot_angles], axis = 1))
+            return (pd.concat([df, new_coords, new_disp], axis = 1), 
+                    pd.concat([data, new_RA, rot_angles], axis = 1)) 
+        return (new_coords, pd.concat([new_RA, rot_angles], axis = 1))
         
-        else :
-            return (newCoords, 
-                    pd.concat([newRA, rot_angles], axis = 1))
-        
-    def angular_velocity(df, data, inplace = True):
+    def angular_velocity(df, data, coord_column = "COORD", 
+                         vect_column = "DISP_VECT", inplace = True):
+        """
+        Computing the angular velocity for each spot using the displacement 
+        vector and the R vectorwhich is the vector from the 
+        rotation axis to the spot coordinates. The vector is perpendicular to
+        the rotation axis.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe containing informations for each spots. It must contains 
+            the following columns :
+                - TP
+                - COORD
+                - DISP_VECT
+        data : pandas.DataFrame
+            Dataframe containing informations for each time points. It must 
+            contains the following columns :
+                - RA_VECT
+        coord_column : str, optional
+            Name of the column containing the coordinates.
+            The default is "COORD".
+        vect_column : str, optional
+            Name of the column containing the displacement vectors.
+            The default is "DISP_VECT".
+        inplace : bool, optional
+            If True, add the displacement vectors column to the input dataframe
+            and returns it. If False, return the displacement vectors as a 
+            pandas.Series.
+            The default is True.
+
+        Returns
+        -------
+        pandas.DataFrame
+            If inplace : return the input dataframes with computed informations.
+            If not inplace : return dataframes with computed informations.
+
+        """
 
         av_res = pd.DataFrame(index = df.index, 
                               columns = ["R_VECT", "R", "AV_VECT", 
                                          "AV_RAD", "AV_DEG"], 
-                              dtype = "object")
+                              dtype = "float")
+        av_res[["R_VECT", "AV_VECT"]] = av_res[["R_VECT", "AV_VECT"]].astype("object")
         
+        ## Iterating over spot IDs
         for ID in df.index:
+            ## Retrieving directory vectors of the PCA plane
             V1, V2 = data.loc[ df.loc[ID, "TP"], ["V1", "V2"]]
-            coord, displ = df.loc[ID, ["COORD", "DISP_VECT"]]
+            ## Retrieving the coordinates and displacement vectors
+            coord, displ = df.loc[ID, [coord_column, vect_column]]
             
+            ## Checking if the displacement vector exist
             if not np.isnan(displ).any() and \
                 not np.equal(displ, np.zeros(3)).all():
+                ## Computing the R vector
                 r_vect = np.dot(coord, V1)*V1 + np.dot(coord, V2)*V2
                 r = np.linalg.norm(r_vect)
     
-
+                ## Computing the angular velocity
                 AV_vect = np.cross(r_vect, displ)/(r**2)
                 AV = np.linalg.norm(AV_vect)
     
+                ## Saving the information to the temporary dataframe
                 av_res.loc[ID] = pd.Series(
                     [np.round(r_vect, 3), round(r, 3), np.round(AV_vect, 3), 
                      round(AV, 3), round(AV*180/np.pi, 3)], 
                     name = ID, index = av_res.columns, dtype = "object")
         
-        velocityByTP = pd.DataFrame(columns = ["MEAN_AV", "STD_AV"],
+        ## velocity_TP hold the informations at the time point level (mean, std
+        ## variation)
+        velocity_TP = pd.DataFrame(columns = ["MEAN_AV", "STD_AV"],
                                     index = data.index, dtype = "float")
         
-        for tp in velocityByTP.index:
+        ## Iterating over time points
+        for tp in velocity_TP.index:
+            ## Retrieving data realted to the given time point
             indexes = df[df["TP"] == tp].index
             subdf = av_res.loc[indexes]
             
+            ## Computing mean and std deviation of the angular velocity
             av_mean = subdf["AV_RAD"].mean()
             av_std = subdf["AV_RAD"].std()
             
-            velocityByTP.loc[tp] = [av_mean, av_std]
+            ## Saving data to the dataframe
+            velocity_TP.loc[tp] = [av_mean, av_std]
         
         if inplace :
             return (pd.concat([df, av_res], axis = 1),
-                    pd.concat([data, velocityByTP], axis = 1))
-        
-        else :
-            return velocityByTP, av_res
-        
-    def voxels(df, filepath, offset = 10, outerThres = 0.9):
-        """
-        Compute voxels of cells. For each time point, the corresponding image
-        is loaded as an array. We get a threshold by getting the minimal pixel
-        value for the pixels that are at spots coordinates, for a given 
-        time point. 
-
-        Parameters
-        ----------
-        TP : int or list, optional
-            Time points to compute. The default is "all".
-        offset : int, optional
-            Added value to the min and max to make sure everything is inside. 
-            The default is 10.
-        outerThres : float, optional
-            Threshold determining that a pixels is inside the voxel and need to
-            be set to 0. Used to improve plotting speed. The default is 0.9.
-
-        """
-        # Opening the image.
-        image = io.imread(filepath)
-        
-        # Converting into a Numpy array. The shape is in this order : Z, Y, X.
-        imarray = np.array(image)
-        
-        # Getting the minimal value of pixels at spots coordinates.
-        df = df.astype("int")
-        values = imarray[df["Z"], df["Y"], df["X"]].tolist()
-        minimal = min(values)
-        
-        # Setting the outside as 0 and the inside as 1.
-        imarray[imarray < (minimal-offset)] = 0
-        imarray[imarray >= (minimal-offset)] = 1
-        
-        # Transposing the array that way it is oriented the same as the 
-        # other objects (spots, vectors).
-        imarray = np.transpose(imarray, (2, 1, 0))
-        
-        # Setting the inner pixels to 0 as well to only get the outer 
-        # shell.
-        toChange = []
-        for x in range(1, imarray.shape[0]-1):
-            for y in range(1, imarray.shape[1]-1):
-                for z in range(1, imarray.shape[2]-1):
-                    
-                    # Getting the 3*3 square array centered on (x,y,z). 
-                    neighbors = imarray[x-1:x+2, y-1:y+2, z-1:z+2]
-                    
-                    # Summing the values and if the number of ones is 
-                    # greater than the threshold, saving the pixel coord.
-                    if neighbors.sum()/27 >= outerThres :
-                        toChange.append([x, y, z])
-        
-        # Setting the values of the selected pixels to 0.
-        for coord in toChange:
-            imarray[coord[0], coord[1], coord[2]] = 0
-    
-        return imarray
+                    pd.concat([data, velocity_TP], axis = 1))
+        return velocity_TP, av_res

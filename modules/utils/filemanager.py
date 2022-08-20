@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sat Jul 30 09:53:34 2022
+File managing methods for OAT.
 
-@author: Alex-932
+@author: alex-merge
+@version: 0.7
 """
 
 import pandas as pd
 import os
 import re
-from modules.utils.compute import *
 
 class filemanager():
+    """
+    Set of methods to search and manage files for OAT.
+    """
     
     def search_file(dirpath, extension, fullpath = True):
         """

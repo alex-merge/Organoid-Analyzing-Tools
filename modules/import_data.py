@@ -2,15 +2,19 @@
 """
 Export methods for OAT.
 
-@author: Alex-932
+@author: alex-merge
 @version: 0.7
 """
 import pandas as pd
+import numpy as np
 
-from modules.utils.filemanager import *
+from modules.utils.filemanager import filemanager
 
 
 class import_data():
+    """
+    Set of methods to import data for OAT.
+    """
     
     def read_spots(dirpath):
         """

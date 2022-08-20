@@ -2,24 +2,16 @@
 """
 Vector based analyzing components of OAT.
 
-@author: Alex-932
+@author: alex-merge
 @version: 0.7
 """
 
-import os
 import numpy as np
 import pandas as pd
 import time
 
-import matplotlib.pyplot as plt 
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib.lines import Line2D
-import seaborn as sns
-
 from modules.utils.filemanager import filemanager
-from modules.utils.clustering import clustering
 from modules.utils.compute import compute
-from modules.utils.figures import figures
 from modules.import_data import import_data
 
 class vectors():
@@ -189,7 +181,7 @@ class vectors():
 
         """
         if dirpath is not None:
-            filepaths = filemanager.search_file(dirpath, csv)
+            filepaths = filemanager.search_file(dirpath, "csv")
         elif filepath is not None:
             filepaths = [filepath]
         elif dirpath is not None and filepath is not None:
@@ -201,7 +193,7 @@ class vectors():
                                 columns = ["TP", "TRACK_ID", "COORD"])
             
         for file_id in range(len(filepaths)) :
-            stream = pd.read_csv(file)
+            stream = pd.read_csv(file_id)
             
             if not "TP" in stream.columns :
                 temp_df = stream["TRACK_ID"].to_frame()
@@ -293,7 +285,7 @@ class vectors():
         return volume
     
     
-    def get_translated_coords(df, data = None):
+    def get_translated_coords(df, data):
         """
         Compute the translated coords to [0, 0, 0].
 
@@ -324,10 +316,10 @@ class vectors():
             (data is not None and \
              filemanager.check_requirements(data, ["CENTROID"])):
                 
-            df = compute.translation(df, data)
+            df, data = compute.translation(df, data)
             
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
-        return df
+        return df, data
     
     
     def get_rotation_axis(df, data = None):
@@ -353,7 +345,6 @@ class vectors():
         """
         step_time = time.time()
         print("Computing the axis of rotations ...", end = " ")
-        
         if filemanager.check_requirements(df, ["TP", "DISP_VECT"]):
             
             data = compute.rotation_axis(df, data)
@@ -373,7 +364,7 @@ class vectors():
             Dataframe which contain the following columns :
                 - TP
                 - DISP_VECT
-                - TRANS_VECT
+                - CENTRD_COORD
         data : pandas.DataFrame
             Dataframe which contains the following column :
                 - RA_VECT
@@ -396,6 +387,26 @@ class vectors():
         return df, data
     
     def get_angular_velocity(df, data):
+        """
+        Computing the angular velocity.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe which contain the following columns :
+                - TP
+                - DISP_VECT
+                - COORD
+        data : pandas.DataFrame
+            Dataframe which contains the following column :
+                - V1
+                - V2
+
+        Returns
+        -------
+        df & data with the angular velocity data added.
+
+        """
         step_time = time.time()
         print("Computing angular velocity ...", end = " ")
         
@@ -408,6 +419,22 @@ class vectors():
         return df, data
         
     def full_analysis(df):
+        """
+        Run a full analysis on the vectors of the dataset.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe loaded using the provided methods of OAT.
+
+        Returns
+        -------
+        df : pandas.DataFrame
+            Dataframe with informations per spots.
+        data : pandas.DataFrame
+            Dataframe with informations per time points.
+
+        """
         
         start_time = time.time()
         
@@ -418,7 +445,7 @@ class vectors():
         data = vectors.get_volume(df, data)
         
         ## Translating coords to the center ([0, 0, 0])
-        df = vectors.get_translated_coords(df, data)
+        df, data = vectors.get_translated_coords(df, data)
         
         ## Computing the axis of rotation vectors.
         data = vectors.get_rotation_axis(df, data)
