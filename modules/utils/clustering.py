@@ -3,7 +3,7 @@
 Clustering methods for OAT.
 
 @author: alex-merge
-@version: 0.7
+@version: 0.8
 """
 
 import pandas as pd
@@ -135,10 +135,10 @@ class clustering():
             cluster = DBSCAN(eps = 7, min_samples = 1).fit_predict(coord_arr)
             cluster = pd.Series(cluster, index = sub_df.index, 
                                 name = "MAIN_CLUSTER", dtype = "int")
-            
+
             ## Saving cluster informations
-            clusters_res["MAIN_CLUSTER"] = [int(cluster.loc[ID]) 
-                                            for ID in cluster.index]
+            clusters_res.loc[cluster.index, "MAIN_CLUSTER"] = [
+                int(cluster.loc[ID]) for ID in cluster.index]
         
         ## Adding the cluster results to get the final clusters    
         clusters_res["FINAL_CLUSTER"] = clusters_res["MAIN_CLUSTER"]+clusters_res["DIST_CLUSTER"]

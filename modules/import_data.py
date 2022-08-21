@@ -3,7 +3,7 @@
 Export methods for OAT.
 
 @author: alex-merge
-@version: 0.7
+@version: 0.8
 """
 import pandas as pd
 import numpy as np
@@ -16,7 +16,7 @@ class import_data():
     Set of methods to import data for OAT.
     """
     
-    def read_spots(dirpath):
+    def read_spots(dirpath, rescaling = [1, 1, 1]):
         """
         Load segmentation result of Trackmate detection as a dataframe.
 
@@ -24,12 +24,13 @@ class import_data():
         ----------
         dirpath : str
             Path to the directory containing files.
-
+        rescaling : list, optional
+            Rescaling factors by axis : [x, y, z]. The default is [1, 1, 1].
         Returns
         -------
         df : pd.DataFrame
             Dataframe where index are spots and columns are 
-            ("QUALITY", "X", "Y", "Z", "TP").
+            ("QUALITY", "COORD", "TP").
 
         """
         ## Importing the files.
@@ -73,19 +74,35 @@ class import_data():
         
         df["TP"] = df["TP"].astype("int")    
         
+        ## Rescaling coordinates
+        df["COORD"] = [arr*np.array(rescaling) for arr in df["COORD"]]
+        
         return df
     
     
     def read_tracks(dirpath, rescaling = [1, 1, 1]):
         """
         Load tracks file (tracks.csv and edges.csv) in the 
-        \\data\\tracks directory as a DataFrame called df. 
+        \\data\\tracks directory as a DataFrame called tracks. 
         
         tracks.csv correspond to the .csv you can get by saving the dataset 
         found in tracks>spots.
         
         tracks.csv correspond to the .csv you can get by saving the dataset 
         found in tracks>edges.
+        
+        Parameters
+        ----------
+        dirpath : str
+            Path to the directory containing files.
+        rescaling : list, optional
+            Rescaling factors by axis : [x, y, z]. The default is [1, 1, 1].
+
+        Returns
+        -------
+        tracks : pd.DataFrame
+            Dataframe where index are spots and columns are 
+            ("QUALITY", "COORD", "TP").
 
         """
         

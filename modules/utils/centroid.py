@@ -3,7 +3,7 @@
 Methods to compute the centroid from a dataset.
 
 @author: alex-merge
-@version: 0.7
+@version: 0.8
 """
 import numpy as np
 from random import randrange

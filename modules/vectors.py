@@ -3,7 +3,7 @@
 Vector based analyzing components of OAT.
 
 @author: alex-merge
-@version: 0.7
+@version: 0.8
 """
 
 import numpy as np
@@ -73,6 +73,8 @@ class vectors():
             vectors.
 
         """
+        step_time = time.time()
+        print("Opening files ...", end = " ")
         
         filepaths = filemanager.search_file(dirpath, "vtk")
         file_to_idx = {filepaths[k]: k for k in range(len(filepaths))}
@@ -141,21 +143,18 @@ class vectors():
             
             subdf = pd.concat([pos, disp, tp], axis = 1)
             df = pd.concat([df, subdf], axis = 0, ignore_index = True)
-            
+        
+        print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         return df
     
-    def load_from_csv(dirpath = None, filepath = None, coord_prefix = "COORD_",
-                      vect_prefix = "VECT_"):
+    def load_from_csv(dirpath = None, filepath = None, prefixes = ["COORD_", "VECT_"], 
+                      filtering = False):
         """
         Legacy method to load any kind of .csv file. But it must contains 
         some columns : 
             - TP : time point for the point if 1 file given, optionnal for a 
                    folder import.
             - COORD : coordinates of the point
-            If displacement vectors are already computed:
-            - DISP_VECT : displacement vectors stored the same line as its
-                          origin point.
-            Else :
             - TRACK_ID : track a point is part of.
             - TARGET : the next point in the track starting from the point.
 
@@ -166,12 +165,15 @@ class vectors():
             The default is None.
         filepath : str
             Fullpath of the file to load. The default is None.
-        coord_prefix : str
-            Prefix of the coordinates columns. The default is "COORD_".
+        prefixes : list of str, optional
+            In case of legacy type of import, prefixes contains the prefix name
+            for the coordinates and displacement vectors.
             For example, the prefix of [C_X, C_Y, C_Z] is "C_".
-        vect_prefix : str
-            Same as coord_prefix but for displacement vectors if present in the 
-            file. 
+            The default is ["COORD_", "VECT_"].
+        filtering : bool, optional
+            If True, cluster the spots to remove those that are not part of the
+            organoid. 
+            The default is False.
 
         Returns
         -------
@@ -188,10 +190,15 @@ class vectors():
             raise ValueError("Too many inputs : choose between directory and specific file")
         else :
             raise ValueError("No inputs")
+        
             
+        step_time = time.time()
+        print("Opening files ...", end = " ")
+        
         final_df = pd.DataFrame(dtype = "object", 
                                 columns = ["TP", "TRACK_ID", "COORD"])
-            
+        
+        ## Iterating over files
         for file_id in range(len(filepaths)) :
             stream = pd.read_csv(file_id)
             
@@ -203,16 +210,35 @@ class vectors():
             else :
                 temp_df = stream[["TP", "TRACK_ID"]]
             
-            coord = pd.Series(dtype = "object")
+            coord = pd.Series(dtype = "object", name = "COORD")
             
             for idx in stream.index:
                 coord.loc[idx] = np.array(
-                    stream.loc[idx, [coord_prefix+k for k in list("XYZ")]].tolist()
+                    stream.loc[idx, [prefixes[0]+k for k in list("XYZ")]].tolist()
                     )
                 
             temp_df = pd.concat([temp_df, coord], axis = 1)
             
             final_df = pd.concat([final_df, temp_df], axis = 0)
+        
+        ## Creating vectors array column if possible
+        if prefixes[1]+"X" in final_df.columns:
+            vectors = pd.Series(dtype = "object", name = "DISP_VECT")
+            
+            for idx in stream.index:
+                vectors.loc[idx] = np.array(
+                    stream.loc[idx, [prefixes[1]+k for k in list("XYZ")]].tolist()
+                    )
+            final_df = pd.concat([final_df, vectors], axis = 1)
+            
+        print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
+            
+        ## Computing vectors if not already.
+        if not "DISP_VECT" in final_df.columns: 
+            step_time = time.time()
+            print("Computing displacement vectors ...", end = " ")
+            final_df = compute.vectors(final_df, filtering = filtering)
+            print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
             
         return final_df
             
