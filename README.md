@@ -28,5 +28,5 @@ seaborn
 
 ## Utilization
 
-Some jupyter notebooks showing how OAT is used are in /demo.
+Some jupyter notebooks showing how OAT is used are in /demo.  
 Visit the wiki section for more informations
