@@ -57,7 +57,7 @@ class vectors():
         return df
     
     
-    def load_from_quickPIV(dirpath):
+    def load_from_quickPIV(dirpath, filtering = True, threshold = 0.2):
         """
         Loading method for quickPIV results. The files are in a .vtk format.
 
@@ -65,6 +65,12 @@ class vectors():
         ----------
         dirpath : str
             Path to the folder containing .vtk files.
+        filtering : bool, optional
+            If True, remove the displacement vectors whose magnitude is lower
+            than the threshold. 
+            The default is True.
+        threshold : float, optional
+            Value that determine if a displacement vector is kept or not.
 
         Returns
         -------
@@ -126,7 +132,7 @@ class vectors():
                 positions[:,lidx] = [ row, col, zet ]
 
             stream.close()
-        
+            
             ## Removing null vectors while creating a dataframe merging both
             ## position and displacements.
             disp = pd.Series(dtype = "object", name = "DISP_VECT")
@@ -145,7 +151,23 @@ class vectors():
             df = pd.concat([df, subdf], axis = 0, ignore_index = True)
         
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
+        
+        if filtering and isinstance(threshold, float):
+            
+            step_time = time.time()
+            print("Filtering vectors ...", end = " ")
+            
+            indexes = df.index.tolist()
+            
+            filtered_indexes = [idx for idx in indexes 
+                                if np.linalg.norm(df.loc[idx, "DISP_VECT"]) >= threshold]
+            
+            df = df.loc[filtered_indexes]
+            
+            print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
+        
         return df
+    
     
     def load_from_csv(dirpath = None, filepath = None, prefixes = ["COORD_", "VECT_"], 
                       filtering = False):
@@ -378,6 +400,7 @@ class vectors():
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         return data
     
+    
     def get_aligned_rotation(df, data):
         """
         Compute the aligned coordinates, displacement vectors and rotation axis.
@@ -412,6 +435,7 @@ class vectors():
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         return df, data
     
+    
     def get_angular_velocity(df, data):
         """
         Computing the angular velocity.
@@ -443,7 +467,8 @@ class vectors():
         
         print("Done !", "("+str(round(time.time()-step_time, 2))+"s)")
         return df, data
-        
+       
+    
     def full_analysis(df):
         """
         Run a full analysis on the vectors of the dataset.
@@ -487,6 +512,3 @@ class vectors():
               "sec")
         ## Returning datasets.
         return df, data
-    
-    
-        
