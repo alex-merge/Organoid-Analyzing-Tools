@@ -111,8 +111,8 @@ class compute():
             
             subdf = df[df["TP"] == tp]
 
-            ## Getting the gradient centroid
-            drift_df.loc[tp, "CENTROID"] = centroid.compute_gradient_centroid(subdf, coord_column)
+            ## Getting the mean centroid
+            drift_df.loc[tp, "CENTROID"] = centroid.compute_mean_centroid(subdf, coord_column)
             ## Trying to compute the cluster's centroid
             try :
                 drift_df.loc[tp, "CLUST_CENTROID"] = centroid.compute_mean_centroid(
@@ -235,7 +235,7 @@ class compute():
             
             for tp in df["TP"].unique():
                 translation.loc[tp] = (
-                    centroid.compute_gradient_centroid(df[df["TP"] == tp], coord_column) -
+                    centroid.compute_mean_centroid(df[df["TP"] == tp], coord_column) -
                     data["CENTRD_CENTROID"].loc[tp])
         
         ## Creating a series which contains the translation for each points 
@@ -444,7 +444,7 @@ class compute():
                     pd.concat([data, new_RA, rot_angles], axis = 1)) 
         return (new_coords, pd.concat([new_RA, rot_angles], axis = 1))
         
-    def angular_velocity(df, data, coord_column = "COORD", 
+    def angular_velocity(df, data, coord_column = "CENTRD_COORD", 
                          vect_column = "DISP_VECT", inplace = True):
         """
         Computing the angular velocity for each spot using the displacement 

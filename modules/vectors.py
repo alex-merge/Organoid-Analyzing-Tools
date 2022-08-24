@@ -222,7 +222,7 @@ class vectors():
         
         ## Iterating over files
         for file_id in range(len(filepaths)) :
-            stream = pd.read_csv(file_id)
+            stream = pd.read_csv(filepaths[file_id])
             
             if not "TP" in stream.columns :
                 temp_df = stream["TRACK_ID"].to_frame()

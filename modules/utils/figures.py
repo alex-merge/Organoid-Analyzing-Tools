@@ -13,6 +13,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 import seaborn as sns
 from pyts.decomposition import SingularSpectrumAnalysis
+import cv2
 
 
 class figures():
@@ -23,7 +24,8 @@ class figures():
     def show_data(df, TP, data = None, mode = "default",
                   show = True, savepath = None, close = True,
                   show_centroid = True, color_clusters = True, 
-                  show_rot_axis = True, show_vectors = True):
+                  show_rot_axis = True, show_vectors = True,
+                  show_av = True):
         """
         Generate a 3D figure that can show the spots, their displacement 
         vectors, the centroid and the rotation axis. 
@@ -166,7 +168,8 @@ class figures():
     def show_data_2D(df, TP, data = None, axis = None, mode = "default",
                      show = True, savepath = None, close = True,
                      show_centroid = True, color_clusters = True, 
-                     show_rot_axis = True, show_vectors = True):
+                     show_rot_axis = True, show_vectors = True,
+                     show_av = True):
         """
         Generate a 3D figure that can show the spots, their displacement 
         vectors, the centroid and the rotation axis. 
@@ -238,6 +241,7 @@ class figures():
         if axis is None or len(axis) != 2 or len([k for k in list(axis.upper())
             if k in ["X", "Y", "Z"]]):
             raise ValueError("Axis must be 'XY', 'XZ' or 'YZ'")
+            
         ## Creating the figure and setting some theme and font for it
         plt.style.use("seaborn-paper"); plt.rcParams.update({'font.family':'Montserrat'})
         fig, legend = plt.figure(figsize = (10, 7), dpi = 400), []
@@ -486,6 +490,46 @@ class figures():
         plt.show()
         plt.close()
 
+    def create_animation(df, data, savepath, fps = 1, mode = "default"):
+        """
+        Generate an animation from the figures generated with 
+        figures.show_data() method.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe containing spots informations.
+        data : pandas.DataFrame
+            Dataframe containing time points informations.
+        savepath : str
+            Folder path to the animation figures and file.
+        fps : int, optional
+            FPS number for the animation. The default is 1.
+        mode : str, optional
+            Similar modes as show_data():
+                - default
+                - centered
+                - aligned
+            The default is "default".
+
+        """
+        TP = df["TP"].unique().tolist()
+        TP.sort()
+        filepaths, img_list = [], []
+        
+        animation = cv2.VideoWriter(savepath+"\\Animation.avi", 0, 
+                                    cv2.VideoWriter_fourcc(*'DIVX'), fps = fps,
+                                    frameSize = (4000, 2800))
+        
+        for tp in TP[:-1]:
+            filepaths.append(savepath+"\\fig_TP{}.png".format(tp))
+            figures.show_data(df, tp, data, mode = mode, show = False, 
+                              savepath = filepaths[-1])
+            
+            img = cv2.imread(filepaths[-1])
+            animation.write(img)
+            
+        animation.release()
         
     def animVectors(self, TP = "all", fps = 1, lim = None, df = "default", 
                     rotAxis = True, cellVoxels = False, 
