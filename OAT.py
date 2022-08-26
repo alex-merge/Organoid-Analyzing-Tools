@@ -206,3 +206,34 @@ class OAT():
         ## Create the timelapse
         self.spots = preprocessing.denoise_timelapse(self.spots, img_path,
                                                      savepath = savepath)
+        
+    def export(self, savedir = None):
+        """
+        Export all dataframes to a csv in savedir.
+
+        Parameters
+        ----------
+        savedir : str, optional
+            Directory path. The default is None.
+
+        """
+        ## Indexing all available dataframes
+        df = {}
+        if hasattr(self, "spots"):
+            df["spots"] = self.spots
+        if hasattr(self, "data"):
+            df["data"] = self.data
+        if hasattr(self, "tracks"):
+            df["tracks"] = self.tracks
+        
+        ## Setting the save directory if not given
+        if savedir is None:
+            if hasattr(self, "spot_dirpath"):
+                savedir = self.spot_dirpath
+            if hasattr(self, "tracks_dirpath"):
+                savedir = self.tracks_dirpath
+        
+        ## Exporting dataframes using export.to_csv method
+        for label in df:
+            export.to_csv(df[label], 
+                          savepath = savedir+"\\{}.csv".format(label))
