@@ -172,37 +172,3 @@ class export():
                 
         ## Closing the file and saving it       
         stream.close()
-
-        
-    def toVTKpoints(df, savepath):
-        """
-        Writer to convert a series of coordinates into a points .vtk file.
-
-        Parameters
-        ----------
-        df : pandas.DataFrame
-            Dataframe which contains coordinates columns.
-        savepath : str
-            Fullpath for the save file.
-
-        """
-        ## Setting the name of the file and opening it
-        stream = open(savepath, "w")
-        
-        ## Getting the number of columns i.e. the number of different tracks
-        points_nb = len(df['X'].index)
-        stream.write("# vtk DataFile Version 2.0\n")
-        stream.write("PIV3D Points\n")
-        stream.write("ASCII\n")
-        stream.write("DATASET POLYDATA\n")
-        stream.write("POINTS "+str(points_nb)+" double\n")
-        
-        ## For every tracks and every timepoint (row), we write the coordinates 
-        ## of the given point in the file
-        for pt in range(points_nb):
-            stream.write(str(df['X'].iloc[pt])+" "+\
-                       str(df['Y'].iloc[pt])+" "+\
-                       str(df['Z'].iloc[pt])+"\n")
-                
-        ## Closing the file and saving it.
-        stream.close()        
