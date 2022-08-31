@@ -171,5 +171,5 @@ class centroid():
                      for i in range(iteration)]
         centroids_arr = np.array(centroids)
         
-        return np.array([np.median(centroids_arr[:, k]) 
+        return np.array([np.mean(centroids_arr[:, k]) 
                          for k in range(centroids_arr.shape[1])])
