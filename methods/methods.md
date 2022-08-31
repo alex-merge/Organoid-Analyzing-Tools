@@ -2,9 +2,9 @@
 
 ## Index
 1. [Search of the centroid](#Centroid)  
-	a. [The "mean" way](#Mean)
-	b. [The "gradient" method](#Gradient)
-	c. [The randomized method](#Rng)
+	a. [The "mean" way](#Mean)  
+	b. [The "gradient" method](#Gradient)  
+	c. [The randomized method](#Rng)  
 2. [Clustering to identify the organoïd](#Clustering)  
 3. [Drift and volume](#DriftandVolume)  
 4. [Rotation axis](#Rotaxis)  
