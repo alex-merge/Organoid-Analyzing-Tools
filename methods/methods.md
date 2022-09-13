@@ -7,8 +7,10 @@
 	c. [The randomized method](#Rng)  
 2. [Clustering to identify the organoïd](#Clustering)  
 3. [Drift and volume](#DriftandVolume)  
+	a. [Drift](#Drift)  
+	b. [Volume](#Volume)
 4. [Rotation axis](#Rotaxis)  
-5. [Angular velocity](#Angvel)  
+5. [Angular velocity](#Angle)  
 
 ## Glossary
 - spot(s) : point that represent a cell's center. Their coordinates can be written as (xi, yi, zi) with i being the ID of the spot.
@@ -62,3 +64,60 @@ Another way to circumvent the bad results of the "mean" method than the gradient
 This method suppose that the "bad" cells are very few.
 
 In theory, if multiple "mean" centroïd are computed on 10, randomly chosen, spots; the mean of those centroïd will be closer to the organoïd's centroïd.
+
+## 2. Clustering to identify the organoïd <a name="Clustering"></a>
+As specified in the 1.b part, sometimes, the organoïd is not well segmented for some reason. One of them can be the proximity with another organoïd for example.
+
+Clustering spots is one of the solution to differientiate cells that belong to the organoïd from cells that don't. But, this is not a easy and simple problem as there are several clustering algorithms to choose from, they come with they're set of paramaters and those are generally not identicall between samples. That means that there is a lot of trial and errors befor getting a well clustered organoïd.  
+
+That is for those reasons that it is segmenting is preferable to clustering.
+
+OAT comes with an implementation of DBSCAN which is by test, the most reliable clustering method for this kind of problems.
+<insert DBSCAN algorithm explanations>
+
+So, the basic clustering of OAT simply run a DBSCAN on the spots coordinates using some predetermined values but, as said before, they will surely not work on other dataset.
+
+Once the spots have been clustered, the results are in the form of a number designating a cluster ID (1 for example), associated with each spots.  
+
+The cluster that is then considered to be the organoïd is the one that has the more points. This choice is based on the assumption that the organoïd contains more cells than there are "bad" cells. This work since the organoïd have been more or less well segmented and the majority of bad cells have been removed.  
+
+The final clustering results are saved in boolean : True for the spots that belongs to the organoïd and False otherwise.  
+
+There is an extra step to reinforce the results that is completely optional.
+In OAT, it is called clustering on distances. Prior to the DBSCAN clustering, another DBSCAN is runned on the distances between the centroïd and the spots. The centroïd is found using the methods above.  
+The idea is that the centroïd will leans toward the center of the organoïd. Given that the organoïd is spherical, spots belonging to it will be in the same range distance-wise. That should lead to 2 or more clear groups on an histogram, one being the organoïd, others being "bad" cells clusters.  
+<Add histogram showing the clustering>
+
+The clustering results or ID are summed with the results of the second clustering to get a more refined clustering. The selection process is then runned on the assembled clusters ID.
+
+## 3. Drift and volume <a name="DriftandVolume"></a>
+### a. Drift <a name="Drift"></a>
+The drift represent the displacement of the whole organoïd between time points. In order to compute it, the centroïd is computed for each time point, then the displacement vectors are extracted from the displacement between 2 time centroïds.  
+Once again, the methods to compute the centroïd are available in the first part.  
+The algebric distance is then recovered with the magnitude of the vectors.  
+
+### b. Volume <a name="Volume"></a>
+To compute the volume of the organoïd at any time points, the convex hull algorithm from Scipy is runned on the spots. This return the volume of the object.
+<insert animation on how the convex hull algorithm works>
+
+## 4. Rotation axis <a name="Rotaxis"></a>
+The axis of rotation of the organoïd helps determining the angular velocity of each cells. To compute it, a PCA is runned on the displacement vectors. The PCA (Principal Component Analysis) allows to reduce the dimension of a multiple dimension problem to a 2 dimension problem. The displacement vectors are used because a PCA on those gives the plane which describe most of the problem.  
+<Show a basic rotation>
+On this simple example it is easy to find the plane that decribe most of the problem. That plane is the XY plane because when represented on this plane, diplacement vectors clearly show the main rotation happening to the sphere.  
+<Add view for each plane>  
+
+The PCA give 2 vectors corresponding to the unitary vectors for each axis of the PCA plane. Knowing that the rotation axis is perpendicular to that plane, one of its directory vectors is the crossproduct of the 2 unitary vectors from the PCA plane.  
+<Adding visualization>
+
+In OAT, only this directory vector is saved and refered as the rotation axis.  
+
+## 5. Angular velocity <a name="Angle"></a>
+The angular velocity of each cell is computed using the following formula :
+
+magnitude( crossproduct(r, displacement)/r^(2) )  
+<Add real math formulas>
+
+where r = dotproduct(coord, V1)*V1+dotproduct(coord, V2)
+and displacement is the displacement vector.
+
+coord are the coordinates of the spot, V1 and V2 are the PCA plane vectors.
