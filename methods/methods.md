@@ -26,7 +26,6 @@ To compute it, the mean of the coordinates on each axis is computed.
 <insert some math here>
 
 It can be difficult and time-consuming to segment an organoid through time without keeping a part of another one or "bad" cells. In those cases, the mean method is not able to give the correct centroid.
-<insert examples>
 
 ### b. The "gradient" method <a name="Gradient"></a>
 This method implies that there are more cells being part of the organoid and that those ones are separated enough from the "bad" cells.
