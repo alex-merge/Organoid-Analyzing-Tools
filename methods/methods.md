@@ -22,8 +22,9 @@ We will see 3 methods to find it, available within OAT.
 ### a. The "mean" way <a name="Mean"></a>
 This is the simplest method and the most accurate when the organoid is well segmented.  
 
-To compute it, the mean of the coordinates on each axis is computed.
-<insert some math here>
+To compute it, the mean of the coordinates on each axis is computed.  
+![plot](./images/Centroid.png)  
+With **k** being the number of spots.  
 
 It can be difficult and time-consuming to segment an organoid through time without keeping a part of another one or "bad" cells. In those cases, the mean method is not able to give the correct centroid.
 
@@ -45,9 +46,8 @@ So, to get more math-friendly terms, we compute the partial derivative of the su
 As a reminder, the partial derivative gives the slope of the sum function on the given axis, at the coordinates of the point. A positive slope indicates that the function increases as the value on that given axis increases. As we search for the minima, the algorithm will go with the descending slope.
 
 The next point is then selected using a user-customizable variable called speed for the speed of research. The next point coordinates are given by the equations :  
-X(i+1) = X(i)+speed*(-sign(dF/dX))  
-Y(i+1) = Y(i)+speed*(-sign(dF/dY))  
-Z(i+1) = Z(i)+speed*(-sign(dF/dZ))  
+![plot2](./images/Gradient_centroid.png)  
+With **F** being the gradient function and i being the index number of the point.  
 
 In this case, we take the invert of the sign of the partial derivative because OAT searches for the minima. If the sign is positive, the function increases as the value rises, so we want to go in the opposite direction and decrease the value.
 
@@ -81,10 +81,11 @@ Once the spots have been clustered, the results are in the form of a number desi
 The cluster that is then considered to be the organoid is the one that has the most points. This choice is based on the assumption that the organoid contains more cells than there are "bad" cells. This works since the organoid have been more or less well segmented and the majority of bad cells have been removed.  
 
 The final clustering results are saved as boolean : True for the spots that belong to the organoid and False otherwise.  
-
+![plot3](./images/clustering_selection_examples.png)  
+	
 There is an extra step to reinforce the results that is completely optional. In OAT, it is called clustering on distances. Prior to the DBSCAN clustering, another DBSCAN is run on the distances between the centroid and the spots. The centroid is found using the methods above.  
 The idea is that the centroid will lean toward the center of the organoid. Given that the organoid is spherical, spots belonging to it will be in the same range distance-wise. That should lead to 2 or more clear groups on an histogram, one being the organoid, others being "bad" cells clusters.  
-<Add histogram showing the clustering>
+![plot4](./images/clustering_on_distance.png)  
 
 The clustering results, or ID, are summed with the results of the second clustering to get a more refined clustering. The selection process is then run on the assembled clusters IDs.  
 
@@ -100,22 +101,22 @@ To compute the volume of the organoid at any time point, the convex hull algorit
 
 ## 4. Rotation axis <a name="Rotaxis"></a>
 The axis of rotation of the organoid helps determine the angular velocity of each cell. To compute it, a PCA is run on the displacement vectors. The PCA (Principal Component Analysis) allows us to reduce the dimension of a multiple-dimensional problem to a 2-dimensional problem. The displacement vectors are used because a PCA on those gives the plane that describes most of the problem.  
-<Show a basic rotation>
+![plot5](./images/rotating_organoid_3D.gif)  
+	
 In this simple example, it is easy to find the plane that decribes most of the problem. That plane is the XY plane because, when represented on this plane, displacement vectors clearly show the main rotation happening to the sphere.  
-<Add view for each plane>  
+![plot6](./images/rotating_organoid_2D.gif)  
 
 The PCA gives 2 vectors corresponding to the unitary vectors for each axis of the PCA plane. Knowing that the rotation axis is perpendicular to that plane, one of its directory vectors is the crossproduct of the 2 unitary vectors from the PCA plane.  
-<Adding visualization>
+![plot7](./images/PCA_vectors_results.png)  
 
 In OAT, only this directory vector is saved and referred to as the rotation axis.  
 
 ## 5. Angular velocity <a name="Angle"></a>
-The angular velocity of each cell is computed using the following formula :
+The angular velocity of each cell is computed using the following formula :  
+![plot8](./images/Angular_velocity.png)  
+With :  
+**disp** as the displacement vector.  
+and :  
+![plot9](./images/Radius_vector.png)  
 
-magnitude( crossproduct(r, displacement)/r^(2) )  
-<Add real math formulas>
-
-where r = dotproduct(coord, V1)*V1+dotproduct(coord, V2)
-and displacement is the displacement vector.
-
-coord are the coordinates of the spot, V1 and V2 are the PCA plane vectors.
+**c** are the coordinates of the spot, v1 and v2 are the PCA plane vectors for the given time point **t**.
