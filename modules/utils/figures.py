@@ -21,6 +21,7 @@ class figures():
     """
     
     def show_data(df, TP, data = None, mode = "default",
+                  viewing_angles = (30, 60),
                   show = True, savepath = None, close = True,
                   show_centroid = True, color_clusters = True, 
                   show_rot_axis = True, show_vectors = True,
@@ -52,6 +53,9 @@ class figures():
                 vectors.
                 - "centered" : centered coordinates, raw displacement vectors.
                 - "aligned" : aligned data (coordiates, vectors).
+        viewing_angles : tuple, optional
+            Viewing angles for the 3D graph (elevation, azimuth).
+            The default is (30, 60).
         show : bool, optional
             If True, show the figure. The default is True.
         savepath : str, optional
@@ -96,7 +100,7 @@ class figures():
             
         ## Creating the figure and setting some theme and font for it
         plt.style.use("seaborn-paper"); plt.rcParams.update({'font.family':'Montserrat'})
-        fig, legend = plt.figure(figsize = (10, 7), dpi = 400), []
+        fig, legend = plt.figure(figsize = (10, 7), dpi = 400, facecolor = "white"), []
         
         ax = fig.add_subplot(111, projection = "3d")
         ax.set(xlabel = "x", ylabel = "y", zlabel = "z",
@@ -157,6 +161,10 @@ class figures():
                           RA_vect[0], RA_vect[1], RA_vect[2],
                           color = "dodgerblue", length = 20, pivot = "middle",
                           label = "Rotation axis")
+        
+        ## Setting the viewing angles
+        elev, azimuth = viewing_angles
+        ax.view_init(elev, azimuth)
         
         ax.legend()
         fig.tight_layout()
@@ -345,7 +353,7 @@ class figures():
             
         ## Creating the figure and setting some theme and font for it
         plt.style.use("seaborn-paper"); plt.rcParams.update({'font.family':'Montserrat'})
-        fig, axs = plt.subplots(2, 2, figsize = (16, 9), dpi = 400)
+        fig, axs = plt.subplots(2, 2, figsize = (16, 9), dpi = 400, facecolor = "white")
         
         ## Plotting angular velocity over time
         sns.lineplot(ax = axs[0, 0], data = df, x = "TP", y = "AV_RAD",
@@ -489,7 +497,7 @@ class figures():
         if np.isnan(arr).any() :
             raise ValueError("Unable to show as there are NaN values")
         
-        fig, axs = plt.subplots(1, figsize = (16, 9), dpi = 400)
+        fig, axs = plt.subplots(1, figsize = (16, 9), dpi = 400, facecolor = "white")
         
         color = ["red"*(k < threshold)+"green"*(k >= threshold) for k in 
                  df[df["TP"] == TP]["AV_RAD"]]
@@ -502,7 +510,7 @@ class figures():
         plt.show()
         plt.close()
 
-    def create_animation(df, data, savepath, fps = 1, mode = "default"):
+    def create_timelapse(df, data, savepath, fps = 1, mode = "default"):
         """
         Generate an animation from the figures generated with 
         figures.show_data() method.
@@ -540,6 +548,52 @@ class figures():
             filepaths.append(savepath+"\\fig_TP{}.png".format(tp))
             figures.show_data(df, tp, data, mode = mode, show = False, 
                               savepath = filepaths[-1])
+            
+            img = cv2.imread(filepaths[-1])
+            animation.write(img)
+            
+        animation.release()
+        
+    def create_rotation(df, data, TP, savepath, fps = 1, mode = "default",
+                        nb_view = 12):
+        """
+        Generate an animation from the figures generated with 
+        figures.show_data() method.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Dataframe containing spots informations.
+        data : pandas.DataFrame
+            Dataframe containing time points informations.
+        savepath : str
+            Folder path to the animation figures and file.
+        fps : int, optional
+            FPS number for the animation. The default is 1.
+        mode : str, optional
+            Similar modes as show_data():
+                - default
+                - centered
+                - aligned
+            The default is "default".
+
+        """
+        ## Importing openCV
+        import cv2
+        
+        filepaths, img_list = [], []
+        
+        animation = cv2.VideoWriter(savepath+"\\Animation.avi", 0, 
+                                    cv2.VideoWriter_fourcc(*'DIVX'), fps = fps,
+                                    frameSize = (4000, 2800))
+        
+        angles = list(range(0, 360, int(360/nb_view)))
+        
+        for az in angles:
+            filepaths.append(savepath+"\\fig_az{}.png".format(az))
+            figures.show_data(df, TP, data, mode = mode, show = False, 
+                              savepath = filepaths[-1], 
+                              viewing_angles = (30, az))
             
             img = cv2.imread(filepaths[-1])
             animation.write(img)

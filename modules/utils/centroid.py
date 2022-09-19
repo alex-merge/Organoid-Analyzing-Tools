@@ -141,7 +141,8 @@ class centroid():
         return cent_coord
     
     
-    def compute_sampled_centroid(df, coord_column, n_sample = 10, iteration = 100):
+    def compute_sampled_centroid(df, coord_column, n_sample = 10, iteration = 100,
+                                 method = "median"):
         """
         Compute the mean centroid for a random sample of the dataframe, several 
         times depending on the number of wanted iteration..
@@ -159,6 +160,10 @@ class centroid():
             Number of sample by random sampling.
         iteration : int
             Number of subsampled centroid to compute.
+        method : str
+            Method to get the final centroid :
+                median : median of the coordinates
+                mean : mean of the coordinates
 
         Returns
         -------
@@ -171,5 +176,9 @@ class centroid():
                      for i in range(iteration)]
         centroids_arr = np.array(centroids)
         
-        return np.array([np.mean(centroids_arr[:, k]) 
-                         for k in range(centroids_arr.shape[1])])
+        if method == "median":
+            return np.array([np.median(centroids_arr[:, k]) 
+                             for k in range(centroids_arr.shape[1])])
+        else :
+            return np.array([np.mean(centroids_arr[:, k]) 
+                             for k in range(centroids_arr.shape[1])])
