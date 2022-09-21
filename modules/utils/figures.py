@@ -14,7 +14,6 @@ from matplotlib.patches import Patch
 import seaborn as sns
 
 
-
 class figures():
     """
     Set of methods to create figures from OAT results.
@@ -25,7 +24,7 @@ class figures():
                   show = True, savepath = None, close = True,
                   show_centroid = True, color_clusters = True, 
                   show_rot_axis = True, show_vectors = True,
-                  show_av = True):
+                  show_pca_vectors = False):
         """
         Generate a 3D figure that can show the spots, their displacement 
         vectors, the centroid and the rotation axis. 
@@ -72,6 +71,9 @@ class figures():
             If True, try to draw the rotation axis. The default is True.
         show_vectors : bool, optional
             If True, try to draw displacement vectors. The default is True.
+        show_pca_vectors : bool, optional
+            If True, try to draw PCA directory plane vectors. 
+            The default is False.
 
         """
         modes = {"default": ["COORD", "DISP_VECT", "RA_VECT", "CENTROID"],
@@ -89,18 +91,22 @@ class figures():
         if show_vectors and modes[mode][1] not in df.columns:
             print("Warning : No vectors data found, proceeding without them")
             show_vectors = False
-        if show_rot_axis and (not show_vectors or \
-            data is None or modes[mode][2] not in data.columns):
+        if show_rot_axis and (data is None or modes[mode][2] not in data.columns):
             print("Warning : No rotation axis data found, proceeding without them")
             show_rot_axis = False
         if show_centroid and (data is None or ("CENTROID" not in data.columns and
                               "CLUST_CENTROID" not in data.columns)):
             print("Warning : No centroïd data found, proceeding without them")
             show_centroid = False 
+        if show_pca_vectors and (data is None or not "V1" in data.columns or 
+                                 not show_centroid):
+            print("Warning : No PCA plane vectors found, proceeding without them")
+            show_pca_vectors = False
             
         ## Creating the figure and setting some theme and font for it
-        plt.style.use("seaborn-paper"); plt.rcParams.update({'font.family':'Montserrat'})
-        fig, legend = plt.figure(figsize = (10, 7), dpi = 400, facecolor = "white"), []
+        plt.style.use("seaborn-paper") 
+        plt.rcParams.update({'font.family':'Montserrat'})
+        fig = plt.figure(figsize = (10, 7), dpi = 400, facecolor = "white")
         
         ax = fig.add_subplot(111, projection = "3d")
         ax.set(xlabel = "x", ylabel = "y", zlabel = "z",
@@ -112,12 +118,9 @@ class figures():
         
         ## Setting the colors and legend in case clusters are shown
         if color_clusters:
-            colors = pd.Series(["green"*val+"orange"*(val == 0) for val in subdf["CLUSTER_SELECT"]],
+            colors = pd.Series(["green"*val+"orange"*(val == 0) 
+                                for val in subdf["CLUSTER_SELECT"]],
                                index = subdf.index)
-            # legend.append(Line2D([0], [0], marker = ">", color = "green", 
-            #                      label = "Selected vectors", ls = ''))
-            # legend.append(Line2D([0], [0], marker = ">", color = "orange", 
-            #                      label = "Unselected vectors", ls = ''))
         else :
             colors = "navy"
         
@@ -154,13 +157,25 @@ class figures():
             except :
                 None
                  
-            ## Showing rotation axis
-            if show_rot_axis:
-                RA_vect = data.loc[TP, modes[mode][2]]
-                ax.quiver(centroid[0], centroid[1], centroid[2],
-                          RA_vect[0], RA_vect[1], RA_vect[2],
-                          color = "dodgerblue", length = 20, pivot = "middle",
-                          label = "Rotation axis")
+        ## Showing rotation axis
+        if show_rot_axis:
+            RA_vect = data.loc[TP, modes[mode][2]]
+            ax.quiver(centroid[0], centroid[1], centroid[2],
+                      RA_vect[0], RA_vect[1], RA_vect[2],
+                      color = "dodgerblue", length = 20, pivot = "middle",
+                      label = "Rotation axis")
+            
+        ## Drawing PCA plane vectors
+        if show_pca_vectors :
+            V1 = data.loc[TP, "V1"]
+            V2 = data.loc[TP, "V2"]
+            ax.quiver(centroid[0], centroid[1], centroid[2],
+                      V1[0], V1[1], V1[2],
+                      color = "orange", length = 20, pivot = "tail",
+                      label = "PCA plane vectors")
+            ax.quiver(centroid[0], centroid[1], centroid[2],
+                      V2[0], V2[1], V2[2],
+                      color = "orange", length = 20, pivot = "tail")
         
         ## Setting the viewing angles
         elev, azimuth = viewing_angles
@@ -176,13 +191,13 @@ class figures():
         if close:
             plt.close()
             
-    def show_data_2D(df, TP, data = None, axis = None, mode = "default",
+    def show_data_2D(df, TP, data = None, mode = "default",
                      show = True, savepath = None, close = True,
                      show_centroid = True, color_clusters = True, 
                      show_rot_axis = True, show_vectors = True,
-                     show_av = True):
+                     show_pca_vectors = False):
         """
-        Generate a 3D figure that can show the spots, their displacement 
+        Generate a 2D figures that can show the spots, their displacement 
         vectors, the centroid and the rotation axis. 
         The figure can also show the clustering results by setting colors to
         clusters.
@@ -224,6 +239,9 @@ class figures():
             If True, try to draw the rotation axis. The default is True.
         show_vectors : bool, optional
             If True, try to draw displacement vectors. The default is True.
+        show_pca_vectors : bool, optional
+            If True, try to draw PCA directory plane vectors. 
+            The default is False.
 
         """
         modes = {"default": ["COORD", "DISP_VECT", "RA_VECT", "CENTROID"],
@@ -241,80 +259,101 @@ class figures():
         if show_vectors and modes[mode][1] not in df.columns:
             print("Warning : No vectors data found, proceeding without them")
             show_vectors = False
-        if show_rot_axis and (not show_vectors or \
-            data is None or modes[mode][2] not in data.columns):
+        if show_rot_axis and (data is None or modes[mode][2] not in data.columns):
             print("Warning : No rotation axis data found, proceeding without them")
             show_rot_axis = False
         if show_centroid and (data is None or ("CENTROID" not in data.columns and
                               "CLUST_CENTROID" not in data.columns)):
             print("Warning : No centroïd data found, proceeding without them")
             show_centroid = False 
-        if axis is None or len(axis) != 2 or len([k for k in list(axis.upper())
-            if k in ["X", "Y", "Z"]]):
-            raise ValueError("Axis must be 'XY', 'XZ' or 'YZ'")
+        if show_pca_vectors and (data is None or not "V1" in data.columns or 
+                                 not show_centroid):
+            print("Warning : No PCA plane vectors found, proceeding without them")
+            show_pca_vectors = False
             
         ## Creating the figure and setting some theme and font for it
-        plt.style.use("seaborn-paper"); plt.rcParams.update({'font.family':'Montserrat'})
-        fig, legend = plt.figure(figsize = (10, 7), dpi = 400), []
+        plt.style.use("seaborn-paper") 
+        plt.rcParams.update({'font.family':'Montserrat'})
+        fig = plt.figure(figsize = (16, 5), dpi = 400, facecolor = "white")
         
-        ax = fig.add_subplot(111, projection = "3d")
-        ax.set(xlabel = "x", ylabel = "y", zlabel = "z",
-               title = "Displacement vectors for time point #"+str(TP))
+        axis = [[0, 1], [0, 2], [1, 2]]
+        labels = [["x", "y"], ["x", "z"], ["y", "z"]]
         
-        subdf = df[df["TP"] == TP].copy()
-        coords = np.array( subdf[ modes[mode][0] ].tolist() )
-        vect = np.array( subdf[ modes[mode][1] ].tolist() )
+        for k in range(3):
         
-        ## Setting the colors and legend in case clusters are shown
-        if color_clusters:
-            colors = pd.Series(["green"*val+"orange"*(val == 0) for val in subdf["CLUSTER_SELECT"]],
-                               index = subdf.index)
-            legend.append(Line2D([0], [0], marker = ">", color = "green", 
-                                 label = "Selected vectors", ls = ''))
-            legend.append(Line2D([0], [0], marker = ">", color = "orange", 
-                                 label = "Unselected vectors", ls = ''))
-        else :
-            colors = "navy"
-        
-        ## Plotting spots
-        ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2], color = colors)   
-         
-        ## Plotting displacement vectors
-        if show_vectors :
-            ax.quiver(coords[:, 0], coords[:, 1], coords[:, 2],
-                      vect[:, 0], vect[:, 1], vect[:, 2],
-                      color = colors)
-      
-        ## Adding the centroid if wanted
-        if show_centroid:
-            try :
-                centroid = data.loc[TP, "CLUST_CENTROID"]
-                ax.scatter(centroid[0], centroid[1], centroid[2], color = "green",
-                           marker = "^")
-                legend.append(Line2D([0], [0], marker = "^", color = "green", 
-                                     label = "Cluster's centroid", ls = ''))
-            except :
-                None
-            try :
-                centroid = data.loc[TP, modes[mode][3]]
-                ax.scatter(centroid[0], centroid[1], centroid[2], color = "red",
-                           marker = "^")
-                legend.append(Line2D([0], [0], marker = "^", color = "red", 
-                                     label = "Centroid", ls = ''))
-            except :
-                None
-                 
+            ax = fig.add_subplot(1, 3, k+1)
+            ax.set(xlabel = labels[k][0], ylabel = labels[k][1])
+            
+            subdf = df[df["TP"] == TP].copy()
+            coords = np.array( subdf[ modes[mode][0] ].tolist() )
+            vect = np.array( subdf[ modes[mode][1] ].tolist() )
+            
+            ## Setting the colors and legend in case clusters are shown
+            if color_clusters:
+                colors = pd.Series(["green"*val+"orange"*(val == 0) 
+                                    for val in subdf["CLUSTER_SELECT"]],
+                                   index = subdf.index)
+            else :
+                colors = "navy"
+            
+            ## Plotting spots
+            ax.scatter(coords[:, axis[k][0]], coords[:, axis[k][1]], 
+                       color = colors, label = "Spots")   
+             
+            ## Plotting displacement vectors
+            if show_vectors :
+                if isinstance(colors, pd.Series):
+                    ax.quiver(coords[:, axis[k][0]], coords[:, axis[k][1]],
+                              vect[:, axis[k][0]], vect[:, axis[k][1]],
+                              color = colors, 
+                              label = ["Selected", "Unselected"])
+                elif isinstance(colors, str):
+                    ax.quiver(coords[:, axis[k][0]], coords[:, axis[k][1]],
+                              vect[:, axis[k][0]], vect[:, axis[k][1]],
+                              color = colors, 
+                              label = "Displacement vectors")
+          
+            ## Adding the centroid if wanted
+            if show_centroid:
+                try :
+                    centroid = data.loc[TP, "CLUST_CENTROID"]
+                    ax.scatter(centroid[axis[k][0]], centroid[axis[k][1]], 
+                               color = "green",
+                               marker = "^", label = "Cluster's centroid")
+                except :
+                    None
+                try :
+                    centroid = data.loc[TP, modes[mode][3]]
+                    ax.scatter(centroid[axis[k][0]], centroid[axis[k][1]], 
+                               color = "red",
+                               marker = "^", label = "Centroid")
+                    
+                except :
+                    None
+                     
             ## Showing rotation axis
             if show_rot_axis:
                 RA_vect = data.loc[TP, modes[mode][2]]
-                ax.quiver(centroid[0], centroid[1], centroid[2],
-                          RA_vect[0], RA_vect[1], RA_vect[2],
-                          color = "dodgerblue", length = 20, pivot = "middle")
-                legend.append(Line2D([0], [0], marker = ">", color = "dodgerblue", 
-                                     label = "Rotation axis", ls = ''))
-        
-        ax.legend(handles = legend, loc = 'best')
-        fig.tight_layout()
+                ax.quiver(centroid[axis[k][0]], centroid[axis[k][1]],
+                          RA_vect[axis[k][0]], RA_vect[axis[k][1]],
+                          color = "dodgerblue", pivot = "middle",
+                          label = "Rotation axis")
+                
+            ## Drawing PCA plane vectors
+            if show_pca_vectors :
+                V1 = data.loc[TP, "V1"]
+                V2 = data.loc[TP, "V2"]
+                ax.quiver(centroid[axis[k][0]], centroid[axis[k][1]],
+                          V1[axis[k][0]], V1[axis[k][0]],
+                          color = "orange", pivot = "tail",
+                          label = "PCA plane vectors")
+                ax.quiver(centroid[axis[k][0]], centroid[axis[k][1]],
+                          V2[axis[k][0]], V2[axis[k][0]],
+                          color = "orange", pivot = "tail")
+            
+            ax.legend()
+        # fig.tight_layout()
+        fig.suptitle("Time point #"+str(TP))
         
         if not savepath is None:
             plt.savefig(savepath)
@@ -322,7 +361,6 @@ class figures():
             plt.show()
         if close:
             plt.close()
-
         
     def show_angular_velocity(df, data, show = True, savepath = None):
         """
@@ -488,16 +526,16 @@ class figures():
     def show_angular_velocity_by_cell(df, TP, threshold = 15, data = None, 
                                       show = True, savepath = None):
         
-        plt.style.use("seaborn-paper"); plt.rcParams.update({'font.family':'Montserrat'})
-        
-        cmap = plt.cm.get_cmap("viridis")
+        plt.style.use("seaborn-paper")
+        plt.rcParams.update({'font.family':'Montserrat'})
         
         arr = np.array(df[df["TP"] == TP]["ALIGNED_COORD"].tolist())
         print(arr)
         if np.isnan(arr).any() :
             raise ValueError("Unable to show as there are NaN values")
         
-        fig, axs = plt.subplots(1, figsize = (16, 9), dpi = 400, facecolor = "white")
+        fig, axs = plt.subplots(1, figsize = (16, 9), dpi = 400, 
+                                facecolor = "white")
         
         color = ["red"*(k < threshold)+"green"*(k >= threshold) for k in 
                  df[df["TP"] == TP]["AV_RAD"]]
